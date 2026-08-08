@@ -1,0 +1,614 @@
+import { SqliteWrapper } from './db.js';
+
+export interface MikroTikConfigRecord {
+  host: string;
+  port: number;
+  useSsl: number; // 0 or 1
+  username: string;
+  password?: string;
+  autoSyncOverdue: number; // 0 or 1
+  syncMethod: 'ppp_secret' | 'firewall_address_list' | 'simple_queue';
+  syncTime?: string;
+}
+
+export function initMikrotikDb(db: SqliteWrapper) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mikrotik_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      host TEXT NOT NULL DEFAULT '192.168.88.1',
+      port INTEGER NOT NULL DEFAULT 443,
+      useSsl INTEGER NOT NULL DEFAULT 1,
+      username TEXT NOT NULL DEFAULT 'admin',
+      password TEXT DEFAULT '',
+      autoSyncOverdue INTEGER NOT NULL DEFAULT 1,
+      syncMethod TEXT NOT NULL DEFAULT 'ppp_secret',
+      syncTime TEXT NOT NULL DEFAULT '15m'
+    );
+  `);
+
+  try {
+    db.exec(`ALTER TABLE mikrotik_config ADD COLUMN syncTime TEXT NOT NULL DEFAULT '15m';`);
+  } catch {
+    // Column might already exist
+  }
+
+  const existing = db.get('SELECT * FROM mikrotik_config WHERE id = 1');
+  if (!existing) {
+    db.run(`
+      INSERT INTO mikrotik_config (id, host, port, useSsl, username, password, autoSyncOverdue, syncMethod, syncTime)
+      VALUES (1, '192.168.88.1', 443, 1, 'admin', '', 1, 'ppp_secret', '15m')
+    `);
+  }
+}
+
+export function getMikrotikConfig(db: SqliteWrapper): MikroTikConfigRecord {
+  initMikrotikDb(db);
+  const cfg = db.get<MikroTikConfigRecord>('SELECT * FROM mikrotik_config WHERE id = 1');
+  if (!cfg) {
+    return {
+      host: '192.168.88.1',
+      port: 443,
+      useSsl: 1,
+      username: 'admin',
+      password: '',
+      autoSyncOverdue: 1,
+      syncMethod: 'ppp_secret',
+      syncTime: '15m',
+    };
+  }
+  return {
+    ...cfg,
+    syncTime: cfg.syncTime || '15m',
+  };
+}
+
+export function saveMikrotikConfig(db: SqliteWrapper, cfg: Partial<MikroTikConfigRecord>) {
+  initMikrotikDb(db);
+  const current = getMikrotikConfig(db);
+  const updated = { ...current, ...cfg };
+
+  db.run(
+    `UPDATE mikrotik_config SET
+      host = ?,
+      port = ?,
+      useSsl = ?,
+      username = ?,
+      password = ?,
+      autoSyncOverdue = ?,
+      syncMethod = ?,
+      syncTime = ?
+    WHERE id = 1`,
+    [
+      updated.host,
+      updated.port,
+      updated.useSsl ? 1 : 0,
+      updated.username,
+      updated.password || '',
+      updated.autoSyncOverdue ? 1 : 0,
+      updated.syncMethod,
+      updated.syncTime || '15m',
+    ]
+  );
+  return getMikrotikConfig(db);
+}
+
+export async function fetchFromRouterOS(cfg: MikroTikConfigRecord, endpoint: string, method: string = 'GET', body?: any) {
+  const protocol = cfg.useSsl ? 'https' : 'http';
+  const url = `${protocol}://${cfg.host}:${cfg.port}/rest/${endpoint.replace(/^\//, '')}`;
+  const auth = Buffer.from(`${cfg.username}:${cfg.password || ''}`).toString('base64');
+
+  if (cfg.useSsl && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0') {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`RouterOS HTTP ${res.status}: ${text || res.statusText}`);
+    }
+    return await res.json();
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
+export async function getRouterInterfaces(db: SqliteWrapper, subscribers: any[] = []) {
+  const cfg = getMikrotikConfig(db);
+
+  try {
+    const ifaces = await fetchFromRouterOS(cfg, 'interface');
+    const parsedList = (Array.isArray(ifaces) ? ifaces : []).map((i: any) => {
+      let vlanId = i['vlan-id'] ? parseInt(i['vlan-id'], 10) : undefined;
+      if (!vlanId && i.name) {
+        const vlanNameMatch = i.name.match(/vlan[-_\.\s]*(\d+)/i) || i.name.match(/(\d+)/);
+        if (vlanNameMatch && (i.type === 'vlan' || i.name.toLowerCase().includes('vlan'))) {
+          vlanId = parseInt(vlanNameMatch[1], 10);
+        }
+      }
+
+      return {
+        id: i['.id'],
+        name: i.name,
+        type: i.type || 'ether',
+        vlanId,
+        running: i.running === 'true' || i.running === true,
+        disabled: i.disabled === 'true' || i.disabled === true,
+        macAddress: i['mac-address'] || '',
+        mtu: i.mtu ? parseInt(i.mtu, 10) : 1500,
+        comment: i.comment || '',
+        rxByte: i['rx-byte'] ? parseInt(i['rx-byte'], 10) : 0,
+        txByte: i['tx-byte'] ? parseInt(i['tx-byte'], 10) : 0,
+        rxPacket: i['rx-packet'] ? parseInt(i['rx-packet'], 10) : 0,
+        txPacket: i['tx-packet'] ? parseInt(i['tx-packet'], 10) : 0,
+      };
+    });
+
+    // Filter to print ONLY interfaces with the word "vlan" (in name, type, comment, or vlanId)
+    const vlanOnlyInterfaces = parsedList.filter((iface: any) => {
+      const name = (iface.name || '').toLowerCase();
+      const type = (iface.type || '').toLowerCase();
+      const comment = (iface.comment || '').toLowerCase();
+      return name.includes('vlan') || type.includes('vlan') || comment.includes('vlan') || iface.vlanId !== undefined;
+    });
+
+    return {
+      success: true,
+      mode: 'live',
+      interfaces: vlanOnlyInterfaces,
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message, interfaces: [] };
+  }
+}
+
+export async function getRouterResources(db: SqliteWrapper, subscribers: any[] = []) {
+  const cfg = getMikrotikConfig(db);
+
+  try {
+    const [resData, idData, activeData] = await Promise.all([
+      fetchFromRouterOS(cfg, 'system/resource'),
+      fetchFromRouterOS(cfg, 'system/identity'),
+      fetchFromRouterOS(cfg, 'ppp/active'),
+    ]);
+
+    const resourceObj = Array.isArray(resData) ? resData[0] : resData;
+    const identityObj = Array.isArray(idData) ? idData[0] : idData;
+    const activeList = Array.isArray(activeData) ? activeData : [];
+
+    return {
+      success: true,
+      mode: 'live',
+      resource: {
+        identity: identityObj?.name || 'RouterOS',
+        model: resourceObj?.board_name || resourceObj?.platform || 'MikroTik Router',
+        version: resourceObj?.version || 'v7.x',
+        uptime: resourceObj?.uptime || 'N/A',
+        cpuLoad: parseInt(resourceObj?.['cpu-load'] || '0', 10),
+        freeMemoryMb: Math.round(parseInt(resourceObj?.['free-memory'] || '0', 10) / (1024 * 1024)),
+        totalMemoryMb: Math.round(parseInt(resourceObj?.['total-memory'] || '0', 10) / (1024 * 1024)),
+        architecture: resourceObj?.architecture_name || 'arm/x86',
+        activeSessionsCount: activeList.length,
+        connectedAt: new Date().toISOString(),
+      },
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: `Failed to connect to RouterOS at ${cfg.host}:${cfg.port}. ${err.message}`,
+      mode: 'live_failed',
+    };
+  }
+}
+
+export async function getRouterSecrets(db: SqliteWrapper, subscribers: any[]) {
+  const cfg = getMikrotikConfig(db);
+
+  try {
+    const secrets = await fetchFromRouterOS(cfg, 'ppp/secret');
+    return {
+      success: true,
+      secrets: (Array.isArray(secrets) ? secrets : []).map((s: any) => ({
+        id: s['.id'],
+        name: s.name,
+        service: s.service || 'pppoe',
+        profile: s.profile || 'default',
+        disabled: s.disabled === 'true' || s.disabled === true,
+        comment: s.comment || '',
+        remoteAddress: s['remote-address'] || '',
+      })),
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message, secrets: [] };
+  }
+}
+
+export async function getRouterActiveSessions(db: SqliteWrapper, subscribers: any[]) {
+  const cfg = getMikrotikConfig(db);
+
+  try {
+    const active = await fetchFromRouterOS(cfg, 'ppp/active');
+    return {
+      success: true,
+      sessions: (Array.isArray(active) ? active : []).map((a: any) => ({
+        id: a['.id'],
+        name: a.name,
+        address: a.address || a['caller-id'] || '',
+        uptime: a.uptime || '0s',
+        service: a.service || 'pppoe',
+        callerId: a['caller-id'] || '',
+      })),
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message, sessions: [] };
+  }
+}
+
+export async function deleteDhcpLease(
+  db: SqliteWrapper,
+  leaseId: string,
+  macAddress?: string
+) {
+  const cfg = getMikrotikConfig(db);
+
+  try {
+    if (leaseId && (leaseId.startsWith('*') || !leaseId.includes(':'))) {
+      await fetchFromRouterOS(cfg, `ip/dhcp-server/lease/${encodeURIComponent(leaseId)}`, 'DELETE');
+      return {
+        success: true,
+        message: `DHCP lease '${leaseId}' successfully deleted from RouterOS.`,
+      };
+    }
+
+    const leases = await fetchFromRouterOS(cfg, 'ip/dhcp-server/lease');
+    const leaseList = Array.isArray(leases) ? leases : [];
+    const matched = leaseList.find(
+      (l: any) => l['.id'] === leaseId || l['mac-address'] === macAddress || l['mac-address'] === leaseId || l.address === leaseId
+    );
+
+    if (matched) {
+      await fetchFromRouterOS(cfg, `ip/dhcp-server/lease/${encodeURIComponent(matched['.id'])}`, 'DELETE');
+      return {
+        success: true,
+        message: `DHCP lease '${matched['.id']}' (${matched['mac-address'] || matched.address}) deleted from RouterOS.`,
+      };
+    } else {
+      return {
+        success: false,
+        error: `DHCP lease not found on RouterOS.`,
+      };
+    }
+  } catch (err: any) {
+    return {
+      success: false,
+      error: `RouterOS Error: ${err.message}`,
+    };
+  }
+}
+
+export async function getRouterDhcpLeases(db: SqliteWrapper, subscribers: any[]) {
+  const cfg = getMikrotikConfig(db);
+
+  try {
+    const leases = await fetchFromRouterOS(cfg, 'ip/dhcp-server/lease');
+    return {
+      success: true,
+      leases: (Array.isArray(leases) ? leases : []).map((l: any) => ({
+        id: l['.id'],
+        address: l.address,
+        macAddress: l['mac-address'],
+        hostName: l['host-name'] || '',
+        server: l.server || 'default',
+        status: l.status || 'bound',
+        disabled: l.disabled === 'true' || l.disabled === true,
+        comment: l.comment || '',
+      })),
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message, leases: [] };
+  }
+}
+
+export async function toggleSubscriberInternet(db: SqliteWrapper, subId: number, disable: boolean, subscribers: any[]) {
+  const cfg = getMikrotikConfig(db);
+  const sub = subscribers.find((s) => s.id === subId);
+  const subName = sub ? `sub_${sub.id}_${sub.last.toLowerCase()}` : `sub_${subId}`;
+
+  try {
+    // Search secret on RouterOS
+    const secrets = await fetchFromRouterOS(cfg, 'ppp/secret');
+    const secretList = Array.isArray(secrets) ? secrets : [];
+    const matched = secretList.find(
+      (s: any) => s.name === subName || s.name === String(subId) || (s.comment && s.comment.includes(`ID #${subId}`))
+    );
+
+    if (matched) {
+      await fetchFromRouterOS(cfg, `ppp/secret/${matched['.id']}`, 'PATCH', {
+        disabled: disable ? 'true' : 'false',
+      });
+    } else {
+      // Create if missing
+      await fetchFromRouterOS(cfg, 'ppp/secret', 'POST', {
+        name: subName,
+        service: 'pppoe',
+        profile: 'default',
+        disabled: disable ? 'true' : 'false',
+        comment: sub ? `VLAN ${sub.vlan || 100} - ${sub.first} ${sub.last} (ID #${sub.id})` : `ID #${subId}`,
+      });
+    }
+
+    return {
+      success: true,
+      message: `Successfully set RouterOS PPP Secret '${subName}' to ${disable ? 'DISABLED' : 'ENABLED'}.`,
+      subId,
+      disabled: disable,
+    };
+  } catch (err: any) {
+    return { success: false, error: `RouterOS Error: ${err.message}` };
+  }
+}
+
+export async function batchSyncSubscribersToRouter(db: SqliteWrapper, subscribers: any[], getSubscriberBillingStatusFn: (sub: any) => string) {
+  const cfg = getMikrotikConfig(db);
+  const results: Array<{ subId: number; name: string; status: string; routerAction: 'ENABLED' | 'DISABLED'; success: boolean }> = [];
+
+  for (const sub of subscribers) {
+    const status = getSubscriberBillingStatusFn(sub); // 'active', 'due', 'overdue', 'inactive'
+    const shouldDisable = status === 'overdue' || status === 'inactive';
+    const name = `${sub.first} ${sub.last}`;
+
+    try {
+      const res = await toggleSubscriberInternet(db, sub.id, shouldDisable, subscribers);
+      results.push({
+        subId: sub.id,
+        name,
+        status,
+        routerAction: shouldDisable ? 'DISABLED' : 'ENABLED',
+        success: res.success,
+      });
+    } catch (err) {
+      results.push({
+        subId: sub.id,
+        name,
+        status,
+        routerAction: shouldDisable ? 'DISABLED' : 'ENABLED',
+        success: false,
+      });
+    }
+  }
+
+  const enabledCount = results.filter((r) => r.routerAction === 'ENABLED').length;
+  const disabledCount = results.filter((r) => r.routerAction === 'DISABLED').length;
+
+  return {
+    success: true,
+    total: subscribers.length,
+    enabledCount,
+    disabledCount,
+    details: results,
+    timestamp: new Date().toLocaleString(),
+  };
+}
+
+export async function toggleVlanInterface(
+  db: SqliteWrapper,
+  vlanId: number | string,
+  disable: boolean,
+  subscribers: any[] = []
+) {
+  const cfg = getMikrotikConfig(db);
+  const vlanStr = String(vlanId).trim();
+
+  try {
+    const ifaces = await fetchFromRouterOS(cfg, 'interface');
+    const list = Array.isArray(ifaces) ? ifaces : [];
+    const matched = list.find((i: any) => {
+      const nameLower = (i.name || '').toLowerCase();
+      return (
+        nameLower === `vlan-${vlanStr}`.toLowerCase() ||
+        nameLower === `vlan${vlanStr}`.toLowerCase() ||
+        String(i['vlan-id']) === vlanStr
+      );
+    });
+
+    if (matched) {
+      await fetchFromRouterOS(cfg, `interface/${matched['.id']}`, 'PATCH', {
+        disabled: disable ? 'true' : 'false',
+      });
+    } else {
+      await fetchFromRouterOS(cfg, `interface/*${vlanStr}`, 'PATCH', {
+        disabled: disable ? 'true' : 'false',
+      });
+    }
+
+    return {
+      success: true,
+      message: `Successfully set RouterOS interface 'VLAN-${vlanStr}' to ${disable ? 'DISABLED' : 'ENABLED'}.`,
+      vlan: vlanId,
+      interfaceName: matched?.name || `VLAN-${vlanStr}`,
+      disabled: disable,
+    };
+  } catch (err: any) {
+    return { success: false, error: `RouterOS Error: ${err.message}` };
+  }
+}
+
+function parseDateSafeServer(dateStr?: string | null): Date | null {
+  if (!dateStr) return null;
+  const match = dateStr.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (match) {
+    const y = parseInt(match[1], 10);
+    const m = parseInt(match[2], 10) - 1;
+    const d = parseInt(match[3], 10);
+    return new Date(y, m, d);
+  }
+  const parsed = new Date(dateStr);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export async function checkAndDisableOverdueVlans(db: SqliteWrapper) {
+  const subscribers = await db.all('SELECT * FROM subscribers');
+  const payments = await db.all('SELECT * FROM payments');
+
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonthIdx = now.getMonth();
+  const currentDay = now.getDate();
+  const currentKey = currentYear * 12 + currentMonthIdx;
+
+  const monthNames = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+  const currentMonthStr = `${monthNames[currentMonthIdx]} ${currentYear}`;
+
+  const processed: Array<{ subId: number; name: string; vlan: number | null; action: string; reason: string }> = [];
+
+  for (const sub of subscribers) {
+    if (sub.status === 'Inactive') {
+      if (sub.vlan) {
+        await toggleVlanInterface(db, sub.vlan, true, subscribers);
+        processed.push({
+          subId: sub.id,
+          name: `${sub.first} ${sub.last}`,
+          vlan: sub.vlan,
+          action: 'DISABLED_VLAN',
+          reason: 'Subscriber status is Inactive'
+        });
+      }
+      continue;
+    }
+
+    const subPayments = payments.filter((p: any) => p.sub === sub.id);
+    const monthsPaid = new Set(subPayments.map((p: any) => p.month));
+
+    let dueDay = (sub.dueDay !== null && sub.dueDay !== undefined && sub.dueDay > 0) ? sub.dueDay : 15;
+    if ((!sub.dueDay || sub.dueDay <= 0) && sub.dueRaw) {
+      const parsed = parseDateSafeServer(sub.dueRaw);
+      if (parsed) {
+        dueDay = parsed.getDate();
+      }
+    }
+
+    const paidCurrent = monthsPaid.has(currentMonthStr);
+    let isOverdue = false;
+    let reason = '';
+
+    const daysInCurrentMonth = new Date(currentYear, currentMonthIdx + 1, 0).getDate();
+    const effectiveDueDay = Math.min(dueDay, daysInCurrentMonth);
+
+    if (!paidCurrent && currentDay > effectiveDueDay) {
+      isOverdue = true;
+      reason = `Current month (${currentMonthStr}) unpaid and past due day (${effectiveDueDay})`;
+    } else {
+      let startK = currentKey;
+      if (sub.dueRaw) {
+        const parsed = parseDateSafeServer(sub.dueRaw);
+        if (parsed) {
+          startK = parsed.getFullYear() * 12 + parsed.getMonth();
+        }
+      }
+      const paidKeys = subPayments.map((p: any) => {
+        const parts = p.month.split(" ");
+        if (parts.length === 2) {
+          const pIdx = monthNames.indexOf(parts[0]);
+          const pYr = parseInt(parts[1], 10);
+          return pYr * 12 + pIdx;
+        }
+        return 0;
+      }).filter((key: number) => key > 0);
+
+      if (paidKeys.length > 0) {
+        startK = Math.min(startK, Math.min(...paidKeys));
+      }
+
+      for (let k = currentKey - 1; k >= startK; k--) {
+        const y = Math.floor(k / 12);
+        const m = k % 12;
+        const mStr = `${monthNames[m]} ${y}`;
+        if (!monthsPaid.has(mStr)) {
+          isOverdue = true;
+          reason = `Prior month (${mStr}) has unpaid balance`;
+          break;
+        }
+      }
+    }
+
+    if (isOverdue && sub.vlan) {
+      await toggleVlanInterface(db, sub.vlan, true, subscribers);
+      processed.push({
+        subId: sub.id,
+        name: `${sub.first} ${sub.last}`,
+        vlan: sub.vlan,
+        action: 'DISABLED_VLAN',
+        reason
+      });
+    }
+  }
+
+  return {
+    success: true,
+    timestamp: new Date().toISOString(),
+    formattedTime: new Date().toLocaleString(),
+    overdueSubscribersCount: processed.length,
+    processed,
+  };
+}
+
+export async function syncRouterTime(db: SqliteWrapper) {
+  const cfg = getMikrotikConfig(db);
+  const now = new Date();
+  const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  const monthStr = months[now.getMonth()];
+  const dayStr = String(now.getDate()).padStart(2, '0');
+  const yearStr = now.getFullYear();
+  const timeStr = now.toTimeString().split(' ')[0]; // "14:30:00"
+  const dateStr = `${monthStr}/${dayStr}/${yearStr}`; // "aug/07/2026"
+
+  try {
+    let clockResult;
+    try {
+      clockResult = await fetchFromRouterOS(cfg, 'system/clock', 'PATCH', {
+        time: timeStr,
+        date: dateStr,
+      });
+    } catch {
+      clockResult = await fetchFromRouterOS(cfg, 'system/clock/set', 'POST', {
+        time: timeStr,
+        date: dateStr,
+      });
+    }
+
+    return {
+      success: true,
+      message: `Router time synchronized with system time (${dateStr} ${timeStr})`,
+      serverTime: now.toISOString(),
+      formattedTime: now.toLocaleString(),
+      clock: clockResult,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Time sync requested at ${now.toLocaleTimeString()}`,
+      error: `Router clock update warning: ${err.message}`,
+      serverTime: now.toISOString(),
+      formattedTime: now.toLocaleString(),
+    };
+  }
+}
+
+

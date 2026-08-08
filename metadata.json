@@ -1,0 +1,6 @@
+{
+  "name": "FTTH Internet Subscriber Payment Tracker",
+  "description": "Monthly payment tracking, subscriber management, billing matrix, and revenue analytics dashboard for internet service providers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

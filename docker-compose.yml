@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  ftth-billing:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ftth-billing
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ftth-data:/app/dist
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+
+volumes:
+  ftth-data:
