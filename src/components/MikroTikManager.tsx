@@ -55,6 +55,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
   
   const [loading, setLoading] = useState(false);
   const [syncingTime, setSyncingTime] = useState(false);
+  const [syncingComments, setSyncingComments] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [assigningVlan, setAssigningVlan] = useState<number | null>(null);
 
@@ -85,11 +86,12 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
         throw new Error(err.error || 'Failed to assign subscriber to VLAN');
       }
 
-      showNotify('success', `Assigned subscriber ${displayName(sub)} (#${sub.id}) to VLAN ${targetVlan}`);
+      showNotify('success', `Assigned ${displayName(sub)} (#${sub.id}) to VLAN ${targetVlan} and updated RouterOS interface comment.`);
       setAssigningVlan(null);
       if (onRefreshData) {
         await onRefreshData();
       }
+      await fetchTabDetails('interfaces');
     } catch (err: any) {
       showNotify('error', err.message || 'Error assigning subscriber to VLAN');
     }
@@ -109,12 +111,31 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
         throw new Error(err.error || 'Failed to unassign subscriber');
       }
 
-      showNotify('info', `Unassigned subscriber ${displayName(sub)} (#${sub.id}) from VLAN`);
+      showNotify('info', `Unassigned ${displayName(sub)} (#${sub.id}) from VLAN.`);
       if (onRefreshData) {
         await onRefreshData();
       }
+      await fetchTabDetails('interfaces');
     } catch (err: any) {
       showNotify('error', err.message || 'Error unassigning subscriber');
+    }
+  };
+
+  const handleSyncAllComments = async () => {
+    setSyncingComments(true);
+    try {
+      const res = await fetch('/api/mikrotik/sync-vlan-comments', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showNotify('success', `Synced subscriber full names to ${data.totalSynced || 0} MikroTik VLAN interface comments!`);
+        await fetchTabDetails('interfaces');
+      } else {
+        showNotify('error', data.error || 'Failed to sync VLAN interface comments.');
+      }
+    } catch (err: any) {
+      showNotify('error', err.message || 'Error syncing comments to RouterOS');
+    } finally {
+      setSyncingComments(false);
     }
   };
 
@@ -429,13 +450,24 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                 MikroTik VLAN interfaces, bandwidth traffic statistics, and subscriber VLAN assignments.
               </p>
             </div>
-            <button
-              onClick={() => fetchTabDetails('interfaces')}
-              className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1 cursor-pointer self-start sm:self-auto"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Refresh Interfaces</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+              <button
+                onClick={handleSyncAllComments}
+                disabled={syncingComments}
+                title="Sync subscriber full names directly to MikroTik VLAN interface comments"
+                className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <Tag className={`w-3.5 h-3.5 text-indigo-600 ${syncingComments ? 'animate-spin' : ''}`} />
+                <span>{syncingComments ? 'Syncing Comments...' : 'Sync Names to MikroTik Comments'}</span>
+              </button>
+              <button
+                onClick={() => fetchTabDetails('interfaces')}
+                className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Refresh Interfaces</span>
+              </button>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -445,6 +477,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                   <th className="py-3 px-4">Interface Name</th>
                   <th className="py-3 px-4">Type</th>
                   <th className="py-3 px-4">VLAN ID</th>
+                  <th className="py-3 px-4">RouterOS Interface Comment</th>
                   <th className="py-3 px-4">Subscribers Assigned</th>
                   <th className="py-3 px-4 text-right">Rx / Tx Traffic</th>
                   <th className="py-3 px-4 text-right">Status</th>
@@ -462,7 +495,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                   if (vlanInterfaces.length === 0) {
                     return (
                       <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-400 text-xs">
+                        <td colSpan={7} className="py-8 text-center text-slate-400 text-xs">
                           No interfaces containing the word "vlan" found on MikroTik router.
                         </td>
                       </tr>
@@ -512,6 +545,16 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                             </span>
                           ) : (
                             <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 font-mono">
+                          {iface.comment ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 text-slate-800 border border-slate-200 text-xs font-semibold">
+                              <Tag className="w-3.5 h-3.5 text-indigo-500" />
+                              <span>{iface.comment}</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-[11px] italic">No comment set</span>
                           )}
                         </td>
                         <td className="py-3 px-4">

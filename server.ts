@@ -16,6 +16,8 @@ import {
   toggleVlanInterface,
   checkAndDisableOverdueVlans,
   syncRouterTime,
+  syncVlanInterfaceComment,
+  syncAllVlanComments,
 } from './server/mikrotik.js';
 
 async function startServer() {
@@ -58,7 +60,8 @@ async function startServer() {
         return res.status(400).json({ error: 'Subscriber ID is required' });
       }
 
-      const existing = await db.get('SELECT id FROM subscribers WHERE id = ?', [sub.id]);
+      const existing = await db.get('SELECT * FROM subscribers WHERE id = ?', [sub.id]);
+      const oldVlan = existing && existing.vlan ? Number(existing.vlan) : null;
 
       if (existing) {
         await db.run(
@@ -98,6 +101,22 @@ async function startServer() {
       }
 
       const updatedSub = await db.get('SELECT * FROM subscribers WHERE id = ?', [sub.id]);
+
+      // Sync RouterOS VLAN comment for old VLAN if changed
+      const newVlan = updatedSub.vlan !== null && updatedSub.vlan !== undefined ? Number(updatedSub.vlan) : null;
+      if (oldVlan && oldVlan !== newVlan) {
+        const remainingOld = await db.all('SELECT * FROM subscribers WHERE vlan = ?', [oldVlan]);
+        const oldComment = remainingOld.map((s: any) => `${s.first} ${s.last}`.trim()).filter(Boolean).join(', ');
+        syncVlanInterfaceComment(db, oldVlan, oldComment).catch(() => {});
+      }
+
+      // Sync RouterOS VLAN comment for new VLAN
+      if (newVlan && newVlan > 0) {
+        const remainingNew = await db.all('SELECT * FROM subscribers WHERE vlan = ?', [newVlan]);
+        const newComment = remainingNew.map((s: any) => `${s.first} ${s.last}`.trim()).filter(Boolean).join(', ');
+        syncVlanInterfaceComment(db, newVlan, newComment).catch(() => {});
+      }
+
       res.json(updatedSub);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -107,7 +126,17 @@ async function startServer() {
   app.delete('/api/subscribers/:id', async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
+      const existingSub = await db.get('SELECT * FROM subscribers WHERE id = ?', [id]);
+      const delVlan = existingSub && existingSub.vlan ? Number(existingSub.vlan) : null;
+
       await db.run('DELETE FROM subscribers WHERE id = ?', [id]);
+
+      if (delVlan && delVlan > 0) {
+        const remaining = await db.all('SELECT * FROM subscribers WHERE vlan = ?', [delVlan]);
+        const remComment = remaining.map((s: any) => `${s.first} ${s.last}`.trim()).filter(Boolean).join(', ');
+        syncVlanInterfaceComment(db, delVlan, remComment).catch(() => {});
+      }
+
       res.json({ success: true, id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -393,6 +422,30 @@ async function startServer() {
   app.post('/api/mikrotik/check-overdue', async (req, res) => {
     try {
       const result = await checkAndDisableOverdueVlans(db);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Sync all subscriber full names to MikroTik VLAN interface comments
+  app.post('/api/mikrotik/sync-vlan-comments', async (req, res) => {
+    try {
+      const result = await syncAllVlanComments(db);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Update a single RouterOS VLAN interface comment
+  app.post('/api/mikrotik/update-vlan-comment', async (req, res) => {
+    try {
+      const { vlan, comment } = req.body;
+      if (!vlan && vlan !== 0) {
+        return res.status(400).json({ error: 'VLAN ID is required' });
+      }
+      const result = await syncVlanInterfaceComment(db, vlan, comment || '');
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

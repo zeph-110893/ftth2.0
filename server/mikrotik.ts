@@ -447,6 +447,93 @@ export async function toggleVlanInterface(
   }
 }
 
+export async function syncVlanInterfaceComment(
+  db: SqliteWrapper,
+  vlanId: number | string,
+  comment: string
+) {
+  const cfg = getMikrotikConfig(db);
+  const vlanStr = String(vlanId).trim();
+  if (!vlanStr || vlanStr === '0') return { success: false, error: 'Invalid VLAN ID' };
+
+  try {
+    const ifaces = await fetchFromRouterOS(cfg, 'interface');
+    const list = Array.isArray(ifaces) ? ifaces : [];
+    const matched = list.find((i: any) => {
+      const nameLower = (i.name || '').toLowerCase();
+      return (
+        String(i['vlan-id']) === vlanStr ||
+        nameLower === `vlan-${vlanStr}`.toLowerCase() ||
+        nameLower === `vlan_${vlanStr}`.toLowerCase() ||
+        nameLower === `vlan${vlanStr}`.toLowerCase() ||
+        (i.comment && i.comment.toLowerCase().includes(`vlan ${vlanStr}`))
+      );
+    });
+
+    if (matched && matched['.id']) {
+      await fetchFromRouterOS(cfg, `interface/${encodeURIComponent(matched['.id'])}`, 'PATCH', {
+        comment: comment,
+      });
+      return {
+        success: true,
+        message: `Updated RouterOS interface '${matched.name}' comment to: "${comment}"`,
+        vlan: vlanId,
+        comment,
+      };
+    } else {
+      try {
+        await fetchFromRouterOS(cfg, `interface/*${vlanStr}`, 'PATCH', {
+          comment: comment,
+        });
+        return {
+          success: true,
+          message: `Updated RouterOS interface '*${vlanStr}' comment to: "${comment}"`,
+          vlan: vlanId,
+          comment,
+        };
+      } catch (e: any) {
+        return {
+          success: false,
+          error: `VLAN interface for ID ${vlanStr} not found on RouterOS.`,
+        };
+      }
+    }
+  } catch (err: any) {
+    return { success: false, error: `RouterOS Error: ${err.message}` };
+  }
+}
+
+export async function syncAllVlanComments(db: SqliteWrapper) {
+  const subscribers = await db.all('SELECT * FROM subscribers');
+  const results: Array<{ vlan: number; comment: string; success: boolean }> = [];
+
+  const vlanMap = new Map<number, any[]>();
+  for (const sub of subscribers) {
+    if (sub.vlan !== null && sub.vlan !== undefined && sub.vlan !== '' && Number(sub.vlan) > 0) {
+      const v = Number(sub.vlan);
+      if (!vlanMap.has(v)) vlanMap.set(v, []);
+      vlanMap.get(v)!.push(sub);
+    }
+  }
+
+  for (const [vlanId, subs] of vlanMap.entries()) {
+    const names = subs.map((s) => `${s.first} ${s.last}`.trim()).filter(Boolean);
+    const comment = names.join(', ');
+    const res = await syncVlanInterfaceComment(db, vlanId, comment);
+    results.push({
+      vlan: vlanId,
+      comment,
+      success: res.success,
+    });
+  }
+
+  return {
+    success: true,
+    totalSynced: results.length,
+    details: results,
+  };
+}
+
 function parseDateSafeServer(dateStr?: string | null): Date | null {
   if (!dateStr) return null;
   const match = dateStr.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
