@@ -477,7 +477,6 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                   <th className="py-3 px-4">Interface Name</th>
                   <th className="py-3 px-4">Type</th>
                   <th className="py-3 px-4">VLAN ID</th>
-                  <th className="py-3 px-4">RouterOS Interface Comment</th>
                   <th className="py-3 px-4">Subscribers Assigned</th>
                   <th className="py-3 px-4 text-right">Rx / Tx Traffic</th>
                   <th className="py-3 px-4 text-right">Status</th>
@@ -495,7 +494,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                   if (vlanInterfaces.length === 0) {
                     return (
                       <tr>
-                        <td colSpan={7} className="py-8 text-center text-slate-400 text-xs">
+                        <td colSpan={6} className="py-8 text-center text-slate-400 text-xs">
                           No interfaces containing the word "vlan" found on MikroTik router.
                         </td>
                       </tr>
@@ -545,16 +544,6 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                             </span>
                           ) : (
                             <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 font-mono">
-                          {iface.comment ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 text-slate-800 border border-slate-200 text-xs font-semibold">
-                              <Tag className="w-3.5 h-3.5 text-indigo-500" />
-                              <span>{iface.comment}</span>
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 text-[11px] italic">No comment set</span>
                           )}
                         </td>
                         <td className="py-3 px-4">
