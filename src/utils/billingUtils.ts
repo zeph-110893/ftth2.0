@@ -80,9 +80,23 @@ export function formatCurrency(amount: number): string {
   return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
 
+export function capitalizeWords(str?: string | null): string {
+  if (!str) return '';
+  return str
+    .trim()
+    .split(/\s+/)
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : ''))
+    .join(' ');
+}
+
 export function displayName(sub: Subscriber): string {
   if (!sub) return 'Unknown Subscriber';
-  return `${sub.last}, ${sub.first}`;
+  const last = capitalizeWords(sub.last);
+  const first = capitalizeWords(sub.first);
+  if (last && first) return `${last}, ${first}`;
+  if (last) return last;
+  if (first) return first;
+  return 'Unknown Subscriber';
 }
 
 export function calculateSubMetrics(
@@ -210,7 +224,7 @@ export function getSubscriberBillingStatus(sub: Subscriber, allPayments: Payment
 }
 
 export function exportToCSV(subs: Subscriber[], payments: PaymentRecord[]) {
-  const headers = ['Subscriber ID', 'Last Name', 'First Name', 'Status', 'Due Day', 'VLAN', 'Monthly Rate', 'Month Paid', 'Amount', 'Date Recorded'];
+  const headers = ['Subscriber ID', 'Last Name', 'First Name', 'Status', 'Due Day', 'VLAN', 'Monthly Rate', 'ONU MAC Address', 'Month Paid', 'Amount', 'Date Recorded'];
   const rows: string[] = [headers.join(',')];
 
   payments.forEach(p => {
@@ -223,6 +237,7 @@ export function exportToCSV(subs: Subscriber[], payments: PaymentRecord[]) {
       s?.dueDay ?? '',
       s?.vlan ?? '',
       s?.rate || 600,
+      `"${s?.macAddress || ''}"`,
       `"${p.month}"`,
       p.amount,
       `"${p.ts || ''}"`
@@ -249,8 +264,17 @@ export function getLeasesForSubscriber(sub: Subscriber, leases: MikroTikDhcpLeas
   const subIdStr = `Subscriber #${sub.id}`;
   const idStr = `ID #${sub.id}`;
   const subName = `${sub.first} ${sub.last}`.toLowerCase();
+  const subMac = (sub.macAddress || '').trim().toLowerCase().replace(/[:-]/g, '');
 
   return leases.filter((lease) => {
+    // 1. Direct MAC address match if subscriber has ONU MAC address configured
+    if (subMac && lease.macAddress) {
+      const leaseMacClean = lease.macAddress.trim().toLowerCase().replace(/[:-]/g, '');
+      if (leaseMacClean === subMac || leaseMacClean.includes(subMac) || subMac.includes(leaseMacClean)) {
+        return true;
+      }
+    }
+    // 2. VLAN IP address match
     if (vlanPrefix1 && lease.address && lease.address.startsWith(vlanPrefix1)) return true;
     if (vlanPrefix2 && lease.address && lease.address.startsWith(vlanPrefix2)) return true;
     if (vlanStr && lease.server && (lease.server.includes(`vlan${vlanStr}`) || lease.server.includes(`vlan-${vlanStr}`))) return true;

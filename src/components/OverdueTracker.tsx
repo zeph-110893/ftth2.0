@@ -79,7 +79,7 @@ export const OverdueTracker: React.FC<OverdueTrackerProps> = ({
                         #{sub.id}
                       </div>
                       <div>
-                        <h3 className="font-bold text-slate-900 text-sm group-hover:text-indigo-600 transition-colors">
+                        <h3 className="font-bold text-slate-900 text-sm group-hover:text-cyan-600 transition-colors">
                           {nameStr}
                         </h3>
                         <div className="text-[11px] text-slate-400 font-mono">
@@ -123,7 +123,7 @@ export const OverdueTracker: React.FC<OverdueTrackerProps> = ({
                       e.stopPropagation();
                       onRecordPaymentForSub(sub);
                     }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer shadow-2xs"
                   >
                     <Receipt className="w-3.5 h-3.5" />
                     <span>Collect Payment</span>

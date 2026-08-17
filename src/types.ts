@@ -13,6 +13,7 @@ export interface Subscriber {
   rate: number; // e.g. 600 or 300
   phone?: string;
   address?: string;
+  macAddress?: string; // ONU / Router MAC Address e.g. "48:8F:5A:12:34:56"
   notes?: string;
 }
 
@@ -124,4 +125,67 @@ export interface MikroTikInterface {
   txPacket?: number;
 }
 
+export interface AuthUser {
+  id: number;
+  username: string;
+  name: string;
+  role: string;
+}
+
 export type ViewTab = 'subscribers' | 'analytics' | 'expenses' | 'overdue' | 'mikrotik';
+
+export interface SubscriberPortalDevice {
+  id: string;
+  deviceName: string;
+  ipAddress: string;
+  status: string;
+  isStatic?: boolean;
+}
+
+export interface SubscriberPortalBandwidth {
+  rxByte: number;
+  txByte: number;
+  rxFormatted: string;
+  txFormatted: string;
+  totalFormatted: string;
+  interfaceName: string;
+  vlanId: number | null;
+  status: 'active' | 'disabled' | 'offline';
+  running: boolean;
+}
+
+export interface SubscriberPortalData {
+  detectedVlan: number | null;
+  detectedIp: string;
+  matchedBy: 'ip_dhcp' | 'vlan_param' | 'vlan_subnet' | 'manual' | 'default';
+  subscriber: {
+    id: number;
+    name: string;
+    first: string;
+    last: string;
+    rate: number;
+    vlan: number | null;
+    status: AccountStatus;
+    dueDay: number | null;
+    address?: string;
+    phone?: string;
+  };
+  billing: {
+    currentMonth: string;
+    statusPill: 'active' | 'due' | 'overdue' | 'inactive';
+    isPaidCurrent: boolean;
+    nextDueDate: string;
+    daysRemaining: number;
+    monthlyRate: number;
+    unpaidMonths: string[];
+    unpaidTotal: number;
+    recentPayments: Array<{
+      month: string;
+      amount: number;
+      ts: string;
+      referenceNo?: string;
+    }>;
+  };
+  bandwidth: SubscriberPortalBandwidth;
+  devices: SubscriberPortalDevice[];
+}

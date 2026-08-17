@@ -503,6 +503,24 @@ export async function syncVlanInterfaceComment(
   }
 }
 
+export function capitalizeWords(str: string): string {
+  if (!str) return '';
+  return str
+    .trim()
+    .split(/\s+/)
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : ''))
+    .join(' ');
+}
+
+export function formatSubCommentName(s: any): string {
+  const last = capitalizeWords(s.last || '');
+  const first = capitalizeWords(s.first || '');
+  if (last && first) return `${last}, ${first}`;
+  if (last) return last;
+  if (first) return first;
+  return '';
+}
+
 export async function syncAllVlanComments(db: SqliteWrapper) {
   const subscribers = await db.all('SELECT * FROM subscribers');
   const results: Array<{ vlan: number; comment: string; success: boolean }> = [];
@@ -517,7 +535,7 @@ export async function syncAllVlanComments(db: SqliteWrapper) {
   }
 
   for (const [vlanId, subs] of vlanMap.entries()) {
-    const names = subs.map((s) => `${s.first} ${s.last}`.trim()).filter(Boolean);
+    const names = subs.map(formatSubCommentName).filter(Boolean);
     const comment = names.join(', ');
     const res = await syncVlanInterfaceComment(db, vlanId, comment);
     results.push({

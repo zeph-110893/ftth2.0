@@ -55,11 +55,15 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
     const billingStatus = getSubscriberBillingStatus(sub, payments);
 
     const fullName = `${sub.first} ${sub.last} ${sub.last}, ${sub.first}`.toLowerCase();
+    const searchClean = searchTerm.toLowerCase().replace(/[:-]/g, '');
+    const subMacClean = (sub.macAddress || '').toLowerCase().replace(/[:-]/g, '');
     const matchesSearch =
       fullName.includes(searchTerm.toLowerCase()) ||
       sub.id.toString().includes(searchTerm) ||
       (sub.vlan && sub.vlan.toString().includes(searchTerm)) ||
-      (sub.address && sub.address.toLowerCase().includes(searchTerm.toLowerCase()));
+      (sub.address && sub.address.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (sub.macAddress && sub.macAddress.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (subMacClean && subMacClean.includes(searchClean));
 
     if (!matchesSearch) return false;
 
@@ -100,16 +104,16 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
       return <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-500 transition-colors" />;
     }
     return sortOrder === 'asc' ? (
-      <ArrowUp className="w-3.5 h-3.5 text-indigo-600 font-bold" />
+      <ArrowUp className="w-3.5 h-3.5 text-cyan-600 font-bold" />
     ) : (
-      <ArrowDown className="w-3.5 h-3.5 text-indigo-600 font-bold" />
+      <ArrowDown className="w-3.5 h-3.5 text-cyan-600 font-bold" />
     );
   };
 
   return (
     <div className="space-y-4">
       {/* Search & Filters Bar */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+      <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
         
         {/* Search input */}
         <div className="relative flex-1">
@@ -118,8 +122,8 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search subscriber name, ID..."
-            className="w-full pl-10 pr-4 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-slate-50/50"
+            placeholder="Search subscriber name, ID, VLAN, MAC address..."
+            className="w-full pl-10 pr-4 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 bg-slate-50/50"
           />
           {searchTerm && (
             <button
@@ -138,7 +142,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-medium bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+              className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-medium bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer"
             >
               <option value="all">All Status ({subscribers.length})</option>
               <option value="active">Active ({activeSubsCount})</option>
@@ -153,7 +157,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
             <select
               value={paymentFilter}
               onChange={(e) => setPaymentFilter(e.target.value as any)}
-              className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-medium bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+              className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-medium bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer"
             >
               <option value="all">All Payments</option>
               <option value="paid">Paid Only</option>
@@ -164,7 +168,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
       </div>
 
       {/* Main Table Card */}
-      <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+      <div className="bg-white border border-slate-200/90 rounded-xl shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
@@ -183,7 +187,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                 <th className="py-3.5 px-3">Bandwidth Usage</th>
                 <th
                   onClick={() => handleSort('dueDay')}
-                  className="py-3.5 px-3 cursor-pointer hover:bg-slate-100/80 transition-colors group select-none bg-indigo-50/40 text-indigo-900"
+                  className="py-3.5 px-3 cursor-pointer hover:bg-slate-100/80 transition-colors group select-none bg-cyan-50/50 text-cyan-950"
                 >
                   <div className="flex items-center gap-1.5 font-bold">
                     <span>Due Day</span>
@@ -203,7 +207,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                       <p className="text-xs text-slate-400">Try adjusting your search query or filter parameters.</p>
                       <button
                         onClick={onAddSubscriber}
-                        className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white font-medium text-xs rounded-md shadow-xs hover:bg-indigo-700 transition-colors"
+                        className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 text-white font-medium text-xs rounded-lg shadow-xs hover:bg-cyan-500 transition-colors cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" /> Add New Subscriber
                       </button>
@@ -227,24 +231,31 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                     >
                       {/* Name & Unpaid Badge */}
                       <td className="py-3 px-4">
-                        <div className={`flex items-center gap-2 font-semibold transition-colors ${
-                          billingStatus === 'overdue'
-                            ? 'text-rose-600 group-hover:text-rose-700'
-                            : billingStatus === 'due'
-                            ? 'text-amber-700 group-hover:text-amber-800'
-                            : 'text-slate-900 group-hover:text-indigo-600'
-                        }`}>
-                          <span>{nameStr}</span>
-                          {unpaidCount > 0 && (
-                            <span
-                              className={`inline-flex items-center justify-center min-w-[20px] px-1.5 py-0.5 text-[10px] font-bold border rounded-full shrink-0 ${
-                                billingStatus === 'overdue'
-                                  ? 'bg-rose-100 text-rose-700 border-rose-200'
-                                  : 'bg-amber-100 text-amber-800 border-amber-200'
-                              }`}
-                              title={`${unpaidCount} unpaid month(s): ${unpaidMonths.join(', ')}`}
-                            >
-                              {unpaidCount}
+                        <div className="flex flex-col">
+                          <div className={`flex items-center gap-2 font-semibold transition-colors ${
+                            billingStatus === 'overdue'
+                              ? 'text-rose-600 group-hover:text-rose-700'
+                              : billingStatus === 'due'
+                              ? 'text-amber-700 group-hover:text-amber-800'
+                              : 'text-slate-900 group-hover:text-cyan-600'
+                          }`}>
+                            <span>{nameStr}</span>
+                            {unpaidCount > 0 && (
+                              <span
+                                className={`inline-flex items-center justify-center min-w-[20px] px-1.5 py-0.5 text-[10px] font-bold border rounded-full shrink-0 ${
+                                  billingStatus === 'overdue'
+                                    ? 'bg-rose-100 text-rose-700 border-rose-200'
+                                    : 'bg-amber-100 text-amber-800 border-amber-200'
+                                }`}
+                                title={`${unpaidCount} unpaid month(s): ${unpaidMonths.join(', ')}`}
+                              >
+                                {unpaidCount}
+                              </span>
+                            )}
+                          </div>
+                          {sub.macAddress && (
+                            <span className="text-[10px] font-mono text-cyan-700/80 bg-cyan-50/70 border border-cyan-200/50 px-1.5 py-0.5 rounded w-fit group-hover:bg-cyan-100/70 transition-colors mt-0.5 tracking-wider">
+                              MAC: {sub.macAddress}
                             </span>
                           )}
                         </div>
@@ -268,8 +279,8 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                             Overdue
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase tracking-wider">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-teal-50 text-teal-700 border border-teal-200 uppercase tracking-wider">
+                            <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
                             Active
                           </span>
                         )}
@@ -280,12 +291,12 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                         <span
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
                             subLeases.length > 0
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              ? 'bg-cyan-50 text-cyan-700 border border-cyan-200'
                               : 'bg-slate-50 text-slate-500 border border-slate-200'
                           }`}
                           title={`${subLeases.length} active lease(s)`}
                         >
-                          <Wifi className="w-3 h-3 text-emerald-600" />
+                          <Wifi className="w-3 h-3 text-cyan-600" />
                           <span>{subLeases.length} {subLeases.length === 1 ? 'lease' : 'leases'}</span>
                         </span>
                       </td>
@@ -299,11 +310,11 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                           }
                           return (
                             <div className="flex items-center gap-1.5 whitespace-nowrap">
-                              <span className="text-emerald-600 font-bold" title="Rx (Download)">
+                              <span className="text-teal-600 font-bold" title="Rx (Download)">
                                 ↓ {formatBytes(iface.rxByte)}
                               </span>
                               <span className="text-slate-300">|</span>
-                              <span className="text-indigo-600 font-bold" title="Tx (Upload)">
+                              <span className="text-cyan-600 font-bold" title="Tx (Upload)">
                                 ↑ {formatBytes(iface.txByte)}
                               </span>
                             </div>
@@ -322,8 +333,8 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                       {/* Current Month Paid Status */}
                       <td className="py-3 px-3">
                         {m.paidCurrent ? (
-                          <span className="inline-flex items-center gap-1 font-bold text-emerald-600 text-xs">
-                            <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs">✓</span>
+                          <span className="inline-flex items-center gap-1 font-bold text-teal-600 text-xs">
+                            <span className="w-5 h-5 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-xs">✓</span>
                             <span>Paid</span>
                           </span>
                         ) : (

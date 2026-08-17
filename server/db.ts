@@ -11,6 +11,19 @@ export class SqliteWrapper {
     this.dbPath = dbPath;
   }
 
+  public getDbPath(): string {
+    return this.dbPath;
+  }
+
+  public setDatabase(newDb: Database) {
+    this.db = newDb;
+  }
+
+  public exportBuffer(): Buffer {
+    const data = this.db.export();
+    return Buffer.from(data);
+  }
+
   public save() {
     const data = this.db.export();
     fs.writeFileSync(this.dbPath, Buffer.from(data));
@@ -95,6 +108,7 @@ export async function getDb(): Promise<SqliteWrapper> {
       rate REAL NOT NULL,
       phone TEXT,
       address TEXT,
+      macAddress TEXT,
       notes TEXT
     );
 
@@ -120,7 +134,36 @@ export async function getDb(): Promise<SqliteWrapper> {
       category TEXT,
       note TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      name TEXT,
+      role TEXT NOT NULL DEFAULT 'admin',
+      createdAt TEXT NOT NULL
+    );
   `);
+
+  // Ensure macAddress column exists on subscribers table
+  try {
+    const tableInfo = wrapperInstance.all('PRAGMA table_info(subscribers);');
+    const hasMacCol = tableInfo.some((col: any) => col.name === 'macAddress');
+    if (!hasMacCol) {
+      wrapperInstance.exec('ALTER TABLE subscribers ADD COLUMN macAddress TEXT;');
+    }
+  } catch (colErr) {
+    console.warn('Subscribers macAddress column migration check:', colErr);
+  }
+
+  // Ensure default admin user exists if table is empty
+  const adminExists = wrapperInstance.get('SELECT id FROM users LIMIT 1');
+  if (!adminExists) {
+    wrapperInstance.run(
+      'INSERT INTO users (id, username, password, name, role, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
+      [1, 'admin', 'admin123', 'System Administrator', 'admin', new Date().toISOString()]
+    );
+  }
 
   // Ensure tables exist without inserting test seed data
   return wrapperInstance;
@@ -132,4 +175,74 @@ export async function seedDatabase(wrapper: SqliteWrapper): Promise<void> {
   wrapper.exec('DELETE FROM expenses;');
   wrapper.exec('DELETE FROM subscribers;');
   wrapper.save();
+}
+
+export async function replaceDatabase(fileBuffer: Buffer): Promise<SqliteWrapper> {
+  const SQL = await initSqlJs();
+  const newDb = new SQL.Database(fileBuffer);
+
+  const wrapper = await getDb();
+  wrapper.setDatabase(newDb);
+
+  // Ensure necessary schema tables exist
+  wrapper.exec(`
+    CREATE TABLE IF NOT EXISTS subscribers (
+      id INTEGER PRIMARY KEY,
+      last TEXT NOT NULL,
+      first TEXT NOT NULL,
+      dueRaw TEXT,
+      dueDay INTEGER,
+      status TEXT NOT NULL,
+      vlan INTEGER,
+      rate REAL NOT NULL,
+      phone TEXT,
+      address TEXT,
+      macAddress TEXT,
+      notes TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS payments (
+      id TEXT PRIMARY KEY,
+      ts TEXT NOT NULL,
+      sub INTEGER NOT NULL,
+      month TEXT NOT NULL,
+      amount REAL NOT NULL,
+      method TEXT,
+      referenceNo TEXT,
+      note TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS expenses (
+      id TEXT PRIMARY KEY,
+      itemName TEXT NOT NULL,
+      unitPrice REAL NOT NULL,
+      quantity INTEGER NOT NULL,
+      totalPrice REAL NOT NULL,
+      date TEXT NOT NULL,
+      month TEXT NOT NULL,
+      category TEXT,
+      note TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      name TEXT,
+      role TEXT NOT NULL DEFAULT 'admin',
+      createdAt TEXT NOT NULL
+    );
+  `);
+
+  // Ensure an admin user exists
+  const adminExists = wrapper.get('SELECT id FROM users LIMIT 1');
+  if (!adminExists) {
+    wrapper.run(
+      'INSERT INTO users (id, username, password, name, role, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
+      [1, 'admin', 'admin123', 'System Administrator', 'admin', new Date().toISOString()]
+    );
+  }
+
+  wrapper.save();
+  return wrapper;
 }

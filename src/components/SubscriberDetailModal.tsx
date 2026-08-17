@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Trash2, History, CheckCircle2, Edit2, Wifi, Server, Network, Power, Loader2, AlertTriangle } from 'lucide-react';
 import { Subscriber, PaymentRecord, AccountStatus, MikroTikDhcpLease } from '../types';
 import { calculateSubMetrics, displayName, formatCurrency, getUnpaidMonths, TODAY, formatDueDate, getLeasesForSubscriber, parseDateSafe, getSubscriberDueDay } from '../utils/billingUtils';
+import { authFetch } from '../utils/auth';
 
 interface SubscriberDetailModalProps {
   subscriber: Subscriber | null;
@@ -93,7 +94,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
   useEffect(() => {
     let isMounted = true;
     if (subscriber && subscriber.vlan !== null && subscriber.vlan !== undefined) {
-      fetch('/api/mikrotik/interfaces')
+      authFetch('/api/mikrotik/interfaces')
         .then((res) => res.json())
         .then((data) => {
           if (isMounted && data.success && Array.isArray(data.interfaces)) {
@@ -126,7 +127,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
     setIsTogglingVlan(true);
     setVlanToggleMsg(null);
     try {
-      const res = await fetch('/api/mikrotik/toggle-vlan', {
+      const res = await authFetch('/api/mikrotik/toggle-vlan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vlan: subscriber.vlan, disable: !enable }),
@@ -157,6 +158,10 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
   // State for inline editing RATE
   const [isEditingRate, setIsEditingRate] = useState(false);
   const [rateInput, setRateInput] = useState(String(subscriber.rate || 600));
+
+  // State for inline editing MAC Address
+  const [isEditingMac, setIsEditingMac] = useState(false);
+  const [macInput, setMacInput] = useState(subscriber.macAddress || '');
 
   // State for inline editing NAME
   const [isEditingName, setIsEditingName] = useState(false);
@@ -235,6 +240,15 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
       onUpdateSubscriber({ ...subscriber, rate: parsed });
     }
     setIsEditingRate(false);
+  };
+
+  const handleSaveMac = () => {
+    const mTrim = macInput.trim().toUpperCase();
+    onUpdateSubscriber({
+      ...subscriber,
+      macAddress: mTrim || undefined,
+    });
+    setIsEditingMac(false);
   };
 
   const handleSaveName = () => {
@@ -316,7 +330,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
               {subscriber.vlan && (
                 <div className="flex items-center gap-2 border-l border-slate-200 pl-3">
                   <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">VLAN Interface:</span>
-                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono">
+                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-cyan-50 text-cyan-700 border border-cyan-200 font-mono">
                     VLAN-{subscriber.vlan}
                   </span>
                   <span
@@ -358,7 +372,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                       setFirstInput(subscriber.first || '');
                       setIsEditingName(true);
                     }}
-                    className="text-[10px] font-semibold text-indigo-600 hover:underline cursor-pointer flex items-center gap-0.5"
+                    className="text-[10px] font-semibold text-cyan-600 hover:underline cursor-pointer flex items-center gap-0.5"
                   >
                     <Edit2 className="w-2.5 h-2.5" />
                     <span>Edit</span>
@@ -374,7 +388,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                       value={lastInput}
                       onChange={(e) => setLastInput(e.target.value)}
                       placeholder="Last Name"
-                      className="w-full text-xs font-bold text-slate-900 bg-white border border-indigo-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      className="w-full text-xs font-bold text-slate-900 bg-white border border-cyan-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-cyan-500"
                       autoFocus
                     />
                     <input
@@ -386,7 +400,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                         if (e.key === 'Escape') setIsEditingName(false);
                       }}
                       placeholder="First Name"
-                      className="w-full text-xs font-bold text-slate-900 bg-white border border-indigo-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      className="w-full text-xs font-bold text-slate-900 bg-white border border-cyan-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-cyan-500"
                     />
                   </div>
                   <div className="flex justify-end gap-1">
@@ -398,7 +412,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                     </button>
                     <button
                       onClick={handleSaveName}
-                      className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded transition-colors cursor-pointer shrink-0"
+                      className="px-2 py-0.5 bg-cyan-600 hover:bg-cyan-700 text-white text-[10px] font-bold rounded transition-colors cursor-pointer shrink-0"
                     >
                       Save
                     </button>
@@ -411,7 +425,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                     setFirstInput(subscriber.first || '');
                     setIsEditingName(true);
                   }}
-                  className="text-xs font-bold text-slate-900 truncate cursor-pointer hover:text-indigo-600 transition-colors"
+                  className="text-xs font-bold text-slate-900 truncate cursor-pointer hover:text-cyan-600 transition-colors"
                   title="Click to edit name"
                 >
                   {nameStr}
@@ -430,7 +444,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                       setDueRawInput(getInitialDueDateForSub(subscriber));
                       setIsEditingDue(true);
                     }}
-                    className="text-[10px] font-semibold text-indigo-600 hover:underline cursor-pointer flex items-center gap-0.5"
+                    className="text-[10px] font-semibold text-cyan-600 hover:underline cursor-pointer flex items-center gap-0.5"
                   >
                     <Edit2 className="w-2.5 h-2.5" />
                     <span>Edit</span>
@@ -450,7 +464,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                         const d = parseDateSafe(e.target.value);
                         if (d) setDueDayInput(String(d.getDate()));
                       }}
-                      className="w-full text-xs font-bold text-slate-900 bg-white border border-indigo-400 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                      className="w-full text-xs font-bold text-slate-900 bg-white border border-cyan-400 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
                     />
                   </div>
 
@@ -465,7 +479,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                     <button
                       type="button"
                       onClick={handleSaveDue}
-                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-md transition-colors cursor-pointer"
+                      className="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-700 text-white text-[10px] font-bold rounded-md transition-colors cursor-pointer"
                     >
                       Save
                     </button>
@@ -478,7 +492,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                     setDueRawInput(getInitialDueDateForSub(subscriber));
                     setIsEditingDue(true);
                   }}
-                  className="text-xs font-bold text-slate-900 font-mono cursor-pointer hover:text-indigo-600 transition-colors"
+                  className="text-xs font-bold text-slate-900 font-mono cursor-pointer hover:text-cyan-600 transition-colors"
                   title="Click to edit Due Date"
                 >
                   {dueDateDisplay}
@@ -496,7 +510,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                       setRateInput(String(subscriber.rate || 600));
                       setIsEditingRate(true);
                     }}
-                    className="text-[10px] font-semibold text-indigo-600 hover:underline cursor-pointer flex items-center gap-0.5"
+                    className="text-[10px] font-semibold text-cyan-600 hover:underline cursor-pointer flex items-center gap-0.5"
                   >
                     <Edit2 className="w-2.5 h-2.5" />
                     <span>Edit</span>
@@ -515,12 +529,12 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                       if (e.key === 'Escape') setIsEditingRate(false);
                     }}
                     placeholder="600"
-                    className="w-full text-xs font-bold text-slate-900 bg-white border border-indigo-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                    className="w-full text-xs font-bold text-slate-900 bg-white border border-cyan-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
                     autoFocus
                   />
                   <button
                     onClick={handleSaveRate}
-                    className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded transition-colors cursor-pointer shrink-0"
+                    className="px-2 py-0.5 bg-cyan-600 hover:bg-cyan-700 text-white text-[10px] font-bold rounded transition-colors cursor-pointer shrink-0"
                   >
                     Save
                   </button>
@@ -531,7 +545,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                     setRateInput(String(subscriber.rate || 600));
                     setIsEditingRate(true);
                   }}
-                  className="text-xs font-bold text-slate-900 font-mono cursor-pointer hover:text-indigo-600 transition-colors"
+                  className="text-xs font-bold text-slate-900 font-mono cursor-pointer hover:text-cyan-600 transition-colors"
                   title="Click to edit Monthly Rate"
                 >
                   {formatCurrency(subscriber.rate)}
@@ -539,7 +553,93 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
               )}
             </div>
 
-            {/* Card 5: TOTAL AMOUNT PAID */}
+            {/* Card 5: ONU / ROUTER MAC ADDRESS (Editable) */}
+            <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3 col-span-2">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  <Wifi className="w-3 h-3 text-cyan-600" />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">ONU / ROUTER MAC ADDRESS</span>
+                </div>
+                {!isEditingMac && (
+                  <button
+                    onClick={() => {
+                      setMacInput(subscriber.macAddress || '');
+                      setIsEditingMac(true);
+                    }}
+                    className="text-[10px] font-semibold text-cyan-600 hover:underline cursor-pointer flex items-center gap-0.5"
+                  >
+                    <Edit2 className="w-2.5 h-2.5" />
+                    <span>{subscriber.macAddress ? 'Edit MAC' : 'Add MAC'}</span>
+                  </button>
+                )}
+              </div>
+
+              {isEditingMac ? (
+                <div className="space-y-1.5 mt-1">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={macInput}
+                      onChange={(e) => setMacInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveMac();
+                        if (e.key === 'Escape') setIsEditingMac(false);
+                      }}
+                      placeholder="e.g. 48:8F:5A:12:34:56"
+                      className="w-full text-xs font-mono font-bold text-slate-900 bg-white border border-cyan-400 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-cyan-500 uppercase tracking-wider"
+                      autoFocus
+                    />
+                    <button
+                      onClick={handleSaveMac}
+                      className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer shrink-0"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setIsEditingMac(false)}
+                      className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-lg transition-colors cursor-pointer shrink-0"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  <span className="text-[10px] text-slate-400 block">
+                    Enter the ONU's MAC address in standard colon-separated format (e.g., 48:8F:5A:XX:XX:XX).
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between mt-0.5">
+                  {subscriber.macAddress ? (
+                    <div
+                      onClick={() => {
+                        setMacInput(subscriber.macAddress || '');
+                        setIsEditingMac(true);
+                      }}
+                      className="text-xs font-mono font-bold text-cyan-800 bg-cyan-50 border border-cyan-200/80 px-2 py-0.5 rounded cursor-pointer hover:bg-cyan-100 transition-colors tracking-wider inline-flex items-center gap-1.5"
+                      title="Click to edit ONU MAC Address"
+                    >
+                      <span>{subscriber.macAddress}</span>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setMacInput('');
+                        setIsEditingMac(true);
+                      }}
+                      className="text-xs text-slate-400 italic hover:text-cyan-600 cursor-pointer text-left"
+                    >
+                      + No ONU MAC address specified (Click to add)
+                    </button>
+                  )}
+                  {subscriber.macAddress && (
+                    <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                      Configured
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Card 6: TOTAL AMOUNT PAID */}
             <div className="bg-emerald-50/80 border border-emerald-200/80 rounded-xl p-3 col-span-2">
               <div className="text-[10px] font-bold text-emerald-700/80 uppercase tracking-wider mb-1">TOTAL AMOUNT PAID</div>
               <div className="text-sm font-extrabold text-emerald-700 font-mono">{formatCurrency(totalPaidAmount)}</div>
@@ -559,7 +659,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                       <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
                         VLAN Interface
                       </span>
-                      <span className="px-2 py-0.5 rounded text-[11px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-mono">
+                      <span className="px-2 py-0.5 rounded text-[11px] font-extrabold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono">
                         VLAN-{subscriber.vlan}
                       </span>
                     </div>
@@ -593,7 +693,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                         handleToggleVlanInterface(true);
                       }
                     }}
-                    className={`relative inline-flex h-7 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 focus:ring-offset-slate-900 ${
+                    className={`relative inline-flex h-7 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-900 ${
                       isVlanEnabled ? 'bg-emerald-500' : 'bg-slate-700'
                     } ${isTogglingVlan ? 'opacity-60 cursor-not-allowed' : ''}`}
                     title={`Click to ${isVlanEnabled ? 'Disable' : 'Enable'} VLAN-${subscriber.vlan} interface on RouterOS`}
@@ -642,7 +742,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-1.5">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                  <Wifi className="w-3.5 h-3.5 text-indigo-600" />
+                  <Wifi className="w-3.5 h-3.5 text-cyan-600" />
                   DHCP LEASES (VLAN {subscriber.vlan || 'N/A'})
                 </span>
               </div>
@@ -748,7 +848,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                     ) : (
                       subLeases.map((lease, idx) => (
                         <tr key={lease.id || lease.macAddress ? `dt-${lease.id || lease.macAddress}` : `dt-lease-${idx}`} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="py-2 px-3 font-mono font-bold text-indigo-700 whitespace-nowrap">{lease.address}</td>
+                          <td className="py-2 px-3 font-mono font-bold text-cyan-700 whitespace-nowrap">{lease.address}</td>
                           <td className="py-2 px-3 text-slate-800 font-semibold">{lease.hostName || '—'}</td>
                           <td className="py-2 px-3 text-center whitespace-nowrap">
                             <span
@@ -804,7 +904,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                         checked={unpaidMonths.length > 0 && selectedUnpaid.length === unpaidMonths.length}
                         onChange={handleToggleSelectAll}
                         disabled={unpaidMonths.length === 0}
-                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                        className="rounded border-slate-300 text-cyan-600 focus:ring-cyan-500 cursor-pointer"
                       />
                     </th>
                     <th className="py-2 px-3 text-center sm:text-left">MONTH</th>
@@ -833,7 +933,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                               type="checkbox"
                               checked={isChecked}
                               onChange={() => handleToggleMonth(mStr)}
-                              className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                              className="rounded border-slate-300 text-cyan-600 focus:ring-cyan-500 cursor-pointer"
                             />
                           </td>
                           <td className="py-2.5 px-3 font-semibold text-slate-900 text-center sm:text-left">
@@ -919,7 +1019,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                         <td className="py-2 px-3 text-center">
                           <button
                             onClick={() => onDeletePayment(entry.ts, subscriber.id, entry.month)}
-                            className="p-1 text-slate-400 hover:text-rose-600 transition-colors"
+                            className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
                             title="Delete record"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -947,8 +1047,8 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
             disabled={selectedUnpaid.length === 0}
             className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
               selectedUnpaid.length > 0
-                ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs'
-                : 'bg-indigo-300 text-white cursor-not-allowed'
+                ? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-xs'
+                : 'bg-cyan-300/60 text-white cursor-not-allowed'
             }`}
           >
             Mark Paid

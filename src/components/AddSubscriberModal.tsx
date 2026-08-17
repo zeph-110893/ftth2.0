@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, UserPlus, Save } from 'lucide-react';
 import { Subscriber, AccountStatus } from '../types';
-import { TODAY, parseDateSafe } from '../utils/billingUtils';
+import { TODAY, parseDateSafe, capitalizeWords } from '../utils/billingUtils';
 
 interface AddSubscriberModalProps {
   isOpen: boolean;
@@ -49,6 +49,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
   const [status, setStatus] = useState<AccountStatus>('Active');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
+  const [macAddress, setMacAddress] = useState('');
 
   useEffect(() => {
     if (editingSubscriber) {
@@ -59,6 +60,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
       setStatus(editingSubscriber.status);
       setPhone(editingSubscriber.phone || '');
       setAddress(editingSubscriber.address || '');
+      setMacAddress(editingSubscriber.macAddress || '');
     } else {
       setFirstName('');
       setLastName('');
@@ -67,6 +69,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
       setStatus('Active');
       setPhone('');
       setAddress('');
+      setMacAddress('');
     }
   }, [editingSubscriber]);
 
@@ -86,8 +89,8 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
 
     const newSub: Subscriber = {
       id: editingSubscriber ? editingSubscriber.id : nextId,
-      first: firstName.trim(),
-      last: lastName.trim(),
+      first: capitalizeWords(firstName),
+      last: capitalizeWords(lastName),
       rate: Number(rate) || 600,
       dueRaw: dueRawVal || undefined,
       dueDay: parsedDueDay,
@@ -95,6 +98,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
       vlan: editingSubscriber ? (editingSubscriber.vlan ?? null) : null,
       phone: phone.trim(),
       address: address.trim(),
+      macAddress: macAddress.trim().toUpperCase(),
     };
 
     onSaveSubscriber(newSub);
@@ -110,7 +114,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
         {/* Header */}
         <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <UserPlus className="w-5 h-5 text-indigo-400" />
+            <UserPlus className="w-5 h-5 text-cyan-400" />
             <h2 className="text-base font-bold">
               {editingSubscriber ? `Edit Subscriber #${editingSubscriber.id}` : `Add New Subscriber (#${nextId})`}
             </h2>
@@ -137,7 +141,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
                 placeholder="e.g. Maria"
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 font-medium"
               />
             </div>
 
@@ -151,7 +155,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
                 placeholder="e.g. Santos"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 font-medium"
               />
             </div>
           </div>
@@ -167,7 +171,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
                 required
                 value={rate}
                 onChange={(e) => setRate(Number(e.target.value))}
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono font-bold"
+                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 font-mono font-bold"
               />
             </div>
 
@@ -180,7 +184,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
                 required
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 font-mono"
               />
             </div>
 
@@ -191,7 +195,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
               <select
                 value={status}
                 onChange={(e) => setStatus(e.target.value as AccountStatus)}
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 font-medium"
               >
                 <option value="Active">Active</option>
                 <option value="Inactive">Inactive</option>
@@ -210,7 +214,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
                 placeholder="0917-000-0000"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
               />
             </div>
 
@@ -223,9 +227,29 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
                 placeholder="Block & Lot, Street, Subd., Barangay"
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
-                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
               />
             </div>
+          </div>
+
+          {/* ONU / Router MAC Address */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-bold text-slate-700 uppercase">
+                ONU / Router MAC Address
+              </label>
+              <span className="text-[10px] text-slate-400 font-mono">Format: XX:XX:XX:XX:XX:XX</span>
+            </div>
+            <input
+              type="text"
+              placeholder="e.g. 48:8F:5A:12:34:56 or BC:54:51:A2:3B:4C"
+              value={macAddress}
+              onChange={(e) => setMacAddress(e.target.value)}
+              className="w-full text-xs p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 font-mono tracking-wider font-semibold text-slate-800 placeholder-slate-400 uppercase"
+            />
+            <p className="text-[10px] text-slate-400 mt-1">
+              Used to match and identify the subscriber's ONU device in MikroTik DHCP leases and network telemetry.
+            </p>
           </div>
 
           {/* Actions */}
@@ -239,7 +263,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
             </button>
             <button
               type="submit"
-              className="inline-flex items-center gap-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition-colors shadow-2xs cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg transition-colors shadow-2xs cursor-pointer"
             >
               <Save className="w-4 h-4" />
               <span>{editingSubscriber ? 'Update Subscriber' : 'Save Subscriber'}</span>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Subscriber, PaymentRecord, Expense, ViewTab, MikroTikDhcpLease, MikroTikInterface } from './types';
+import { Subscriber, PaymentRecord, Expense, ViewTab, MikroTikDhcpLease, MikroTikInterface, AuthUser } from './types';
 import { calculateSubMetrics, exportToCSV, CURRENT_MONTH } from './utils/billingUtils';
+import { getStoredUser, getAuthToken, clearAuthSession, authFetch } from './utils/auth';
 
 import { Header } from './components/Header';
 import { NavigationTabs } from './components/NavigationTabs';
@@ -9,28 +10,100 @@ import { RevenueAnalytics } from './components/RevenueAnalytics';
 import { ExpensesTracker } from './components/ExpensesTracker';
 import { OverdueTracker } from './components/OverdueTracker';
 import { MikroTikManager } from './components/MikroTikManager';
+import { LoginPage } from './components/LoginPage';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
+import { DatabaseModal } from './components/DatabaseModal';
 
 import { SubscriberDetailModal } from './components/SubscriberDetailModal';
 import { RecordPaymentModal } from './components/RecordPaymentModal';
 import { AddSubscriberModal } from './components/AddSubscriberModal';
 import { AddExpenseModal } from './components/AddExpenseModal';
+import { SubscriberPortal } from './components/SubscriberPortal';
 
 export default function App() {
+  // Subscriber Portal view state (no authentication required)
+  const [isViewingPortal, setIsViewingPortal] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname.toLowerCase();
+      const search = window.location.search.toLowerCase();
+      return path.startsWith('/portal') || search.includes('portal') || search.includes('vlan=');
+    }
+    return false;
+  });
+
+  // Auth state
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => getStoredUser());
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState<boolean>(false);
+  const [isDatabaseModalOpen, setIsDatabaseModalOpen] = useState<boolean>(false);
+
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [dhcpLeases, setDhcpLeases] = useState<MikroTikDhcpLease[]>([]);
   const [mikrotikInterfaces, setMikrotikInterfaces] = useState<MikroTikInterface[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [lastSyncedTime, setLastSyncedTime] = useState<Date>(new Date());
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // Fetch initial data from SQLite backend API
-  const fetchData = async () => {
+  // Check existing session validity on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      const token = getAuthToken();
+      if (!token) {
+        setCurrentUser(null);
+        setIsAuthChecking(false);
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const res = await authFetch('/api/auth/me');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.authenticated && data.user) {
+            setCurrentUser(data.user);
+          } else {
+            setCurrentUser(null);
+          }
+        } else {
+          setCurrentUser(null);
+          clearAuthSession();
+        }
+      } catch (err) {
+        console.error('Error verifying auth session:', err);
+        setCurrentUser(null);
+      } finally {
+        setIsAuthChecking(false);
+      }
+    };
+
+    checkAuth();
+
+    // Listen for unauthorized 401 events
+    const handleUnauthorized = () => {
+      setCurrentUser(null);
+    };
+
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+  }, []);
+
+  // Fetch initial data or perform background sync (2 requests/min = every 30s)
+  const fetchData = async (isSilent = false) => {
+    if (!currentUser && !getAuthToken()) return;
+
     try {
-      setIsLoading(true);
+      if (!isSilent) {
+        setIsLoading(true);
+      } else {
+        setIsSyncing(true);
+      }
+
       const [resData, resLeases, resInterfaces] = await Promise.all([
-        fetch('/api/data'),
-        fetch('/api/mikrotik/leases').catch(() => null),
-        fetch('/api/mikrotik/interfaces').catch(() => null),
+        authFetch('/api/data'),
+        authFetch('/api/mikrotik/leases').catch(() => null),
+        authFetch('/api/mikrotik/interfaces').catch(() => null),
       ]);
 
       if (resData.ok) {
@@ -53,16 +126,37 @@ export default function App() {
           setMikrotikInterfaces(ifaceData.interfaces || []);
         }
       }
+      setLastSyncedTime(new Date());
     } catch (err) {
       console.error('Error fetching SQLite data:', err);
     } finally {
-      setIsLoading(false);
+      if (!isSilent) {
+        setIsLoading(false);
+      }
+      setIsSyncing(false);
     }
   };
 
+  // Initial load when authenticated
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (!currentUser) return;
+    fetchData(false);
+  }, [currentUser]);
+
+  // Handle Logout
+  const handleLogout = async () => {
+    try {
+      await authFetch('/api/auth/logout', { method: 'POST' });
+    } catch (err) {
+      console.error('Logout error:', err);
+    } finally {
+      clearAuthSession();
+      setCurrentUser(null);
+      setSubscribers([]);
+      setPayments([]);
+      setExpenses([]);
+    }
+  };
 
   // View state
   const [currentTab, setCurrentTab] = useState<ViewTab>('subscribers');
@@ -104,7 +198,7 @@ export default function App() {
     setPayments((prev) => [newPayment, ...prev]);
 
     try {
-      const res = await fetch('/api/payments', {
+      const res = await authFetch('/api/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newPayment),
@@ -124,7 +218,7 @@ export default function App() {
 
     if (target && target.id) {
       try {
-        await fetch(`/api/payments/${target.id}`, { method: 'DELETE' });
+        await authFetch(`/api/payments/${target.id}`, { method: 'DELETE' });
       } catch (err) {
         console.error('Failed to delete payment from SQLite:', err);
       }
@@ -143,7 +237,7 @@ export default function App() {
     });
 
     try {
-      const res = await fetch('/api/expenses', {
+      const res = await authFetch('/api/expenses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fullExpense),
@@ -161,7 +255,7 @@ export default function App() {
     if (confirm('Are you sure you want to delete this expense record?')) {
       setExpenses((prev) => prev.filter((e) => e.id !== id));
       try {
-        await fetch(`/api/expenses/${id}`, { method: 'DELETE' });
+        await authFetch(`/api/expenses/${id}`, { method: 'DELETE' });
       } catch (err) {
         console.error('Failed to delete expense from SQLite:', err);
       }
@@ -182,7 +276,7 @@ export default function App() {
     setSelectedSubDetail((prev) => (prev && prev.id === savedSub.id ? savedSub : prev));
 
     try {
-      const res = await fetch('/api/subscribers', {
+      const res = await authFetch('/api/subscribers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(savedSub),
@@ -205,7 +299,7 @@ export default function App() {
     }
 
     try {
-      await fetch(`/api/subscribers/${subId}`, { method: 'DELETE' });
+      await authFetch(`/api/subscribers/${subId}`, { method: 'DELETE' });
     } catch (err) {
       console.error('Failed to delete subscriber from SQLite:', err);
     }
@@ -214,7 +308,7 @@ export default function App() {
   const handleDeleteDhcpLease = async (leaseId: string, macAddress?: string): Promise<boolean> => {
     setDhcpLeases((prev) => prev.filter((l) => l.id !== leaseId && l.macAddress !== macAddress));
     try {
-      const res = await fetch('/api/mikrotik/delete-lease', {
+      const res = await authFetch('/api/mikrotik/delete-lease', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ leaseId, macAddress }),
@@ -230,28 +324,49 @@ export default function App() {
     }
   };
 
-  // Reset SQLite dataset
-  const handleResetData = async () => {
-    if (confirm('Reset SQLite database to default initial sample data? All local edits will be replaced.')) {
-      try {
-        const res = await fetch('/api/reset', { method: 'POST' });
-        if (res.ok) {
-          const data = await res.json();
-          setSubscribers(data.subscribers || []);
-          setPayments(data.payments || []);
-          setExpenses(data.expenses || []);
-        }
-      } catch (err) {
-        console.error('Failed to reset SQLite database:', err);
-      }
-    }
-  };
+  // If subscriber portal is requested (no authentication required)
+  if (isViewingPortal) {
+    return (
+      <SubscriberPortal
+        onOpenAdminLogin={() => {
+          setIsViewingPortal(false);
+          if (window.history && window.history.pushState) {
+            window.history.pushState({}, '', '/');
+          }
+        }}
+      />
+    );
+  }
+
+  // If initial auth check is in progress, show clean loading state
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400 gap-3">
+        <div className="w-9 h-9 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+        <span className="text-xs font-semibold tracking-wide text-slate-300">Checking authorization...</span>
+      </div>
+    );
+  }
+
+  // If not logged in, render the secure Login Page with Subscriber Portal access button
+  if (!currentUser) {
+    return (
+      <LoginPage
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+        }}
+        onOpenSubscriberPortal={() => {
+          setIsViewingPortal(true);
+        }}
+      />
+    );
+  }
 
   // Next Subscriber ID
   const nextSubId = Math.max(0, ...subscribers.map((s) => s.id)) + 1;
 
   return (
-    <div className="min-h-screen bg-slate-100/90 text-slate-800 flex flex-col font-sans antialiased">
+    <div className="min-h-screen bg-slate-100/90 text-slate-800 flex flex-col font-sans antialiased selection:bg-cyan-500 selection:text-white">
       {/* App Header */}
       <Header
         onAddSubscriber={() => {
@@ -266,6 +381,13 @@ export default function App() {
           setEditingExpense(null);
           setIsAddExpenseOpen(true);
         }}
+        onOpenDatabaseModal={() => setIsDatabaseModalOpen(true)}
+        onOpenSubscriberPortal={() => setIsViewingPortal(true)}
+        onRefresh={() => fetchData(true)}
+        isSyncing={isSyncing}
+        currentUser={currentUser}
+        onOpenChangePassword={() => setIsChangePasswordOpen(true)}
+        onLogout={handleLogout}
         totalSubsCount={subscribers.length}
         activeCount={activeCount}
         dueCount={dueCount}
@@ -285,8 +407,8 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center py-20 text-slate-500 gap-3">
-            <div className="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-            <span className="text-xs font-semibold text-slate-600">Loading FTTH Database from SQLite...</span>
+            <div className="w-8 h-8 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs font-semibold text-slate-600 font-mono">Loading FTTH Database from SQLite...</span>
           </div>
         ) : (
           <>
@@ -403,6 +525,30 @@ export default function App() {
         }}
         onSaveExpense={handleSaveExpense}
       />
+
+      {/* Security / Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={isChangePasswordOpen}
+        onClose={() => setIsChangePasswordOpen(false)}
+        currentUser={currentUser}
+        onUserUpdated={(updatedUser) => setCurrentUser(updatedUser)}
+      />
+
+      {/* Database Backup & Restore Modal */}
+      <DatabaseModal
+        isOpen={isDatabaseModalOpen}
+        onClose={() => setIsDatabaseModalOpen(false)}
+        subscribersCount={subscribers.length}
+        paymentsCount={payments.length}
+        expensesCount={expenses.length}
+        onDatabaseRestored={({ subscribers: newSubs, payments: newPayments, expenses: newExpenses }) => {
+          setSubscribers(newSubs);
+          setPayments(newPayments);
+          setExpenses(newExpenses);
+          setLastSyncedTime(new Date());
+        }}
+      />
     </div>
   );
 }
+

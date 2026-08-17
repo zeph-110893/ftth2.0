@@ -69,10 +69,10 @@ export const RevenueAnalytics: React.FC<RevenueAnalyticsProps> = ({
     <div className="space-y-6">
       
       {/* Hero Lifetime Revenue & Net Income Card */}
-      <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white rounded-2xl p-6 sm:p-8 shadow-md border border-slate-700/50">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-700/60">
+      <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 text-white rounded-2xl p-6 sm:p-8 shadow-md border border-slate-800">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 flex items-center justify-center">
               <TrendingUp className="w-5 h-5" />
             </div>
             <div>
@@ -80,13 +80,13 @@ export const RevenueAnalytics: React.FC<RevenueAnalyticsProps> = ({
               <p className="text-xs text-slate-400">All-time revenue, operating expenses & net profit</p>
             </div>
           </div>
-          <span className="self-start sm:self-auto px-3 py-1 bg-slate-800 text-slate-300 text-xs font-semibold rounded-full border border-slate-700">
+          <span className="self-start sm:self-auto px-3 py-1 bg-slate-800/80 text-cyan-300 text-xs font-semibold rounded-full border border-slate-700">
             All Time Summary
           </span>
         </div>
 
         {/* 3 Main Highlights: Gross Revenue, Expenses, Net Profit */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 py-6 border-b border-slate-700/60">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 py-6 border-b border-slate-800">
           
           {/* Lifetime Gross */}
           <div className="text-center md:text-left">
@@ -115,8 +115,8 @@ export const RevenueAnalytics: React.FC<RevenueAnalyticsProps> = ({
           </div>
 
           {/* Lifetime Net Profit */}
-          <div className="text-center md:text-left bg-slate-800/80 p-4 rounded-xl border border-indigo-500/30">
-            <div className="text-[11px] uppercase font-bold text-amber-400 tracking-wider">
+          <div className="text-center md:text-left bg-slate-800/80 p-4 rounded-xl border border-cyan-500/30">
+            <div className="text-[11px] uppercase font-bold text-cyan-400 tracking-wider">
               = Lifetime Net Profit
             </div>
             <div className="text-3xl sm:text-4xl font-black font-mono text-white mt-1">
@@ -133,7 +133,7 @@ export const RevenueAnalytics: React.FC<RevenueAnalyticsProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-6">
           <div className="bg-slate-800/80 p-3.5 rounded-xl border border-slate-700">
             <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-indigo-400" />
+              <Users className="w-3.5 h-3.5 text-cyan-400" />
               <span>Total Subscribers</span>
             </div>
             <div className="text-xl font-bold font-mono text-white mt-1">{subscribers.length}</div>

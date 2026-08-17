@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { Subscriber, PaymentRecord, MikroTikConfig, MikroTikResource, MikroTikInterface, MikroTikDhcpLease } from '../types';
 import { getSubscriberBillingStatus, displayName } from '../utils/billingUtils';
+import { authFetch } from '../utils/auth';
 
 interface MikroTikManagerProps {
   subscribers: Subscriber[];
@@ -67,7 +68,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
       );
 
       for (const existingSub of existingSubsOnVlan) {
-        await fetch('/api/subscribers', {
+        await authFetch('/api/subscribers', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...existingSub, vlan: null }),
@@ -75,7 +76,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
       }
 
       const updatedSub = { ...sub, vlan: targetVlan };
-      const res = await fetch('/api/subscribers', {
+      const res = await authFetch('/api/subscribers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedSub),
@@ -100,7 +101,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
   const handleUnassignSubscriberFromVlan = async (sub: Subscriber) => {
     try {
       const updatedSub = { ...sub, vlan: 0 };
-      const res = await fetch('/api/subscribers', {
+      const res = await authFetch('/api/subscribers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedSub),
@@ -124,7 +125,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
   const handleSyncAllComments = async () => {
     setSyncingComments(true);
     try {
-      const res = await fetch('/api/mikrotik/sync-vlan-comments', { method: 'POST' });
+      const res = await authFetch('/api/mikrotik/sync-vlan-comments', { method: 'POST' });
       const data = await res.json();
       if (res.ok && data.success) {
         showNotify('success', `Synced subscriber full names to ${data.totalSynced || 0} MikroTik VLAN interface comments!`);
@@ -153,7 +154,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
 
   const fetchConfig = async () => {
     try {
-      const res = await fetch('/api/mikrotik/config');
+      const res = await authFetch('/api/mikrotik/config');
       if (res.ok) {
         const data = await res.json();
         setConfig({
@@ -171,7 +172,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
   const handleSyncRouterClock = async () => {
     setSyncingTime(true);
     try {
-      const res = await fetch('/api/mikrotik/sync-time', { method: 'POST' });
+      const res = await authFetch('/api/mikrotik/sync-time', { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         showNotify('success', data.message || 'Router system clock synchronized successfully!');
@@ -188,7 +189,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
   const fetchSystemInfo = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/mikrotik/resources');
+      const res = await authFetch('/api/mikrotik/resources');
       const data = await res.json();
       if (data.success && data.resource) {
         setResource(data.resource);
@@ -205,7 +206,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
   const fetchTabDetails = async (tab: string) => {
     if (tab === 'interfaces') {
       try {
-        const res = await fetch('/api/mikrotik/interfaces');
+        const res = await authFetch('/api/mikrotik/interfaces');
         const data = await res.json();
         if (data.success) setInterfaces(data.interfaces || []);
       } catch (err) {
@@ -213,7 +214,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
       }
     } else if (tab === 'dhcp') {
       try {
-        const res = await fetch('/api/mikrotik/leases');
+        const res = await authFetch('/api/mikrotik/leases');
         const data = await res.json();
         if (data.success) setLeases(data.leases || []);
       } catch (err) {
@@ -230,7 +231,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await fetch('/api/mikrotik/config', {
+      const res = await authFetch('/api/mikrotik/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),

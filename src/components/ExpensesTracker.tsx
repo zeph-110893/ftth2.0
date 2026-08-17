@@ -148,7 +148,7 @@ export const ExpensesTracker: React.FC<ExpensesTrackerProps> = ({
             {/* Add Expense Button */}
             <button
               onClick={onAddExpense}
-              className="px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+              className="px-3 py-1.5 text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-500 rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Add Expense</span>
@@ -197,7 +197,7 @@ export const ExpensesTracker: React.FC<ExpensesTrackerProps> = ({
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => onEditExpense(exp)}
-                      className="p-1 text-slate-500 hover:text-indigo-600 rounded"
+                      className="p-1 text-slate-500 hover:text-cyan-600 rounded"
                       title="Edit"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
@@ -292,7 +292,7 @@ export const ExpensesTracker: React.FC<ExpensesTrackerProps> = ({
                       <div className="flex items-center justify-center gap-1">
                         <button
                           onClick={() => onEditExpense(exp)}
-                          className="p-1 text-slate-500 hover:text-indigo-600 rounded transition-colors"
+                          className="p-1 text-slate-500 hover:text-cyan-600 rounded transition-colors"
                           title="Edit"
                         >
                           <Edit3 className="w-3.5 h-3.5" />
