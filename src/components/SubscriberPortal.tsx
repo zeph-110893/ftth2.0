@@ -18,6 +18,7 @@ import {
   ArrowDownCircle,
   ArrowUpCircle,
   HelpCircle,
+  UserPlus,
 } from 'lucide-react';
 import { SubscriberPortalData } from '../types';
 
@@ -25,55 +26,100 @@ interface SubscriberPortalProps {
   onOpenAdminLogin?: () => void;
 }
 
+interface PortalSubOption {
+  id: number;
+  name: string;
+  vlan: number | null;
+  rate: number;
+  status: string;
+}
+
 export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
   onOpenAdminLogin,
 }) => {
   const [data, setData] = useState<SubscriberPortalData | null>(null);
+  const [subscriberOptions, setSubscriberOptions] = useState<PortalSubOption[]>([]);
+  const [selectedVlan, setSelectedVlan] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
-  // Fetch subscriber portal info (purely automatic VLAN & IP detection)
-  const fetchPortalData = useCallback(async (silent = false) => {
+  // Fetch available real subscribers for the dropdown selector
+  const fetchSubscribersList = useCallback(async () => {
+    try {
+      const res = await fetch('/api/portal/subscribers');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.subscribers)) {
+          setSubscriberOptions(json.subscribers);
+          if (json.subscribers.length > 0 && selectedVlan === null) {
+            const firstValidVlan = json.subscribers.find((s: PortalSubOption) => s.vlan)?.vlan || json.subscribers[0].id;
+            setSelectedVlan(firstValidVlan);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch portal subscribers list:', err);
+    }
+  }, [selectedVlan]);
+
+  useEffect(() => {
+    fetchSubscribersList();
+  }, [fetchSubscribersList]);
+
+  // Fetch subscriber portal info
+  const fetchPortalData = useCallback(async (vlanOverride?: number | null, silent = false) => {
+    const vlanToFetch = vlanOverride !== undefined ? vlanOverride : selectedVlan;
     try {
       if (!silent) setIsLoading(true);
       else setIsRefreshing(true);
       setError(null);
 
-      const res = await fetch('/api/portal/subscriber-info');
+      const url = vlanToFetch ? `/api/portal/subscriber-info?vlan=${vlanToFetch}` : '/api/portal/subscriber-info';
+      const res = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
       if (!res.ok) {
-        throw new Error(`Failed to load subscriber info (${res.status})`);
+        throw new Error(`Server returned status ${res.status}`);
       }
+
       const json = await res.json();
-      if (json.success) {
+      if (json && json.success) {
         setData(json);
+        if (json.detectedVlan && selectedVlan === null) {
+          setSelectedVlan(json.detectedVlan);
+        }
         setLastRefreshed(new Date());
       } else {
-        throw new Error(json.error || 'Failed to detect subscriber');
+        setData(null);
+        setError(json?.error || 'No subscriber data found.');
       }
     } catch (err: any) {
-      console.error('Error fetching portal data:', err);
-      setError(err.message || 'Unable to detect your home VLAN connection');
+      console.warn('Portal data fetch notice:', err?.message || err);
+      setData(null);
+      setError(err?.message || 'Unable to connect to server');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, []);
+  }, [selectedVlan]);
 
   useEffect(() => {
     fetchPortalData();
   }, [fetchPortalData]);
 
-  // Auto-refresh bandwidth telemetry every 15 seconds
+  // Auto-refresh bandwidth telemetry every 15 seconds if subscriber is present
   useEffect(() => {
+    if (!data?.subscriber) return;
     const timer = setInterval(() => {
-      if (data) {
-        fetchPortalData(true);
-      }
+      fetchPortalData(selectedVlan, true);
     }, 15000);
     return () => clearInterval(timer);
-  }, [data, fetchPortalData]);
+  }, [data?.subscriber, selectedVlan, fetchPortalData]);
 
   // Helper to pick device icon based on device name
   const getDeviceIcon = (deviceName: string) => {
@@ -142,22 +188,35 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
-            {/* Auto-detect VLAN Status */}
-            {data && (
-              <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/90 rounded-lg border border-slate-700 text-xs text-slate-300">
-                <Globe className="w-3.5 h-3.5 text-cyan-400" />
-                <span>
-                  VLAN: <strong className="text-cyan-400 font-mono">#{data.detectedVlan || '100'}</strong>
-                </span>
-                <span className="text-slate-500">|</span>
-                <span className="text-[11px] text-slate-400 font-mono">{data.detectedIp}</span>
+          <div className="flex items-center gap-2.5 flex-wrap justify-end">
+            {/* Real VLAN Selector / Preview Switcher */}
+            {subscriberOptions.length > 0 && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800 rounded-lg border border-slate-700 text-xs text-slate-300">
+                <Globe className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                <label htmlFor="vlan-select" className="text-[11px] text-slate-400 shrink-0">Subscriber:</label>
+                <select
+                  id="vlan-select"
+                  value={selectedVlan || ''}
+                  onChange={(e) => {
+                    const newVlan = e.target.value ? parseInt(e.target.value, 10) : null;
+                    setSelectedVlan(newVlan);
+                    fetchPortalData(newVlan, false);
+                  }}
+                  className="bg-slate-900 border border-slate-700 text-cyan-300 font-mono text-xs rounded px-1.5 py-0.5 focus:outline-none focus:border-cyan-500 cursor-pointer"
+                  title="Select subscriber connection"
+                >
+                  {subscriberOptions.map((sub) => (
+                    <option key={sub.id} value={sub.vlan || sub.id}>
+                      {sub.vlan ? `VLAN #${sub.vlan}` : `#${sub.id}`} - {sub.name} (Plan {sub.rate})
+                    </option>
+                  ))}
+                </select>
               </div>
             )}
 
             {/* Refresh Button */}
             <button
-              onClick={() => fetchPortalData(true)}
+              onClick={() => fetchPortalData(selectedVlan, true)}
               disabled={isRefreshing}
               className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors cursor-pointer border border-slate-700"
               title="Refresh Live Data"
@@ -189,29 +248,31 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
             </span>
             <p className="text-xs text-slate-400">No login required — retrieving live connection telemetry</p>
           </div>
-        ) : error || !data ? (
-          <div className="bg-white rounded-2xl p-8 border border-slate-200 text-center space-y-4 max-w-lg mx-auto shadow-sm">
-            <div className="w-12 h-12 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center mx-auto">
-              <AlertTriangle className="w-6 h-6" />
+        ) : !data || !data.subscriber ? (
+          <div className="bg-white rounded-2xl p-10 border border-slate-200 text-center space-y-4 max-w-lg mx-auto shadow-sm my-8">
+            <div className="w-14 h-14 rounded-2xl bg-cyan-50 text-cyan-600 flex items-center justify-center mx-auto border border-cyan-100">
+              <Wifi className="w-7 h-7" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900">VLAN Not Detected Automatically</h3>
-              <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
-                {error || 'Unable to automatically detect your VLAN ID from your current network connection.'}
+              <h3 className="text-lg font-bold text-slate-900">No Subscriber Accounts Found</h3>
+              <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                The database is clean and has no active subscriber records registered yet.
               </p>
               <p className="text-xs text-slate-400 mt-1">
-                Please make sure you are connected directly to your home fiber WiFi or router Ethernet port.
+                Log in to the Admin Panel to register your subscribers, assign VLANs, and track payments.
               </p>
             </div>
-            <div className="pt-2">
-              <button
-                onClick={() => fetchPortalData(false)}
-                className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer shadow-sm"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Retry Auto-Detection</span>
-              </button>
-            </div>
+            {onOpenAdminLogin && (
+              <div className="pt-3">
+                <button
+                  onClick={onOpenAdminLogin}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer shadow-sm"
+                >
+                  <Lock className="w-4 h-4 text-cyan-400" />
+                  <span>Log In to Admin Panel</span>
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <>
@@ -223,7 +284,7 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
                   Connected as <strong className="text-slate-900">{data.subscriber.name}</strong> (Subscriber #{data.subscriber.id})
                 </span>
                 <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-mono font-semibold rounded text-[11px]">
-                  VLAN #{data.detectedVlan || '100'}
+                  VLAN #{data.detectedVlan || data.subscriber.vlan || '100'}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-[11px] text-slate-400">
@@ -329,7 +390,7 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
                     </div>
                     <div className="py-2.5 flex justify-between">
                       <span className="text-slate-500">Assigned VLAN</span>
-                      <span className="font-mono font-bold text-cyan-600">VLAN-{data.detectedVlan || '100'}</span>
+                      <span className="font-mono font-bold text-cyan-600">VLAN-{data.detectedVlan || data.subscriber.vlan || '100'}</span>
                     </div>
                     <div className="py-2.5 flex justify-between">
                       <span className="text-slate-500">Service Status</span>
@@ -349,76 +410,77 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
                 </div>
 
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-[11px] text-slate-500 leading-relaxed">
-                  For service assistance, technical support, or billing queries, contact our fiber support hotline.
+                  For service assistance, technical support, or billing queries, contact your fiber network administrator.
                 </div>
               </div>
             </div>
 
             {/* MIDDLE SECTION: BANDWIDTH USAGE */}
-            <div className="bg-white rounded-2xl p-6 sm:p-7 border border-slate-200 shadow-sm space-y-5">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-100">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-xl bg-cyan-50 text-cyan-600 border border-cyan-100">
-                    <Activity className="w-5 h-5" />
+            {data.bandwidth && (
+              <div className="bg-white rounded-2xl p-6 sm:p-7 border border-slate-200 shadow-sm space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-100">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-cyan-50 text-cyan-600 border border-cyan-100">
+                      <Activity className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h2 className="text-base font-bold text-slate-900">Bandwidth Usage & Traffic</h2>
+                      <p className="text-xs text-slate-500">Live data consumption on interface {data.bandwidth.interfaceName}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h2 className="text-base font-bold text-slate-900">Bandwidth Usage & Traffic</h2>
-                    <p className="text-xs text-slate-500">Live data consumption on interface {data.bandwidth.interfaceName}</p>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="px-2.5 py-1 bg-slate-100 rounded-lg font-mono text-slate-600">
+                      MTU: 1500
+                    </span>
+                    <span className={`px-2.5 py-1 rounded-lg font-semibold ${data.bandwidth.status === 'active' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700'}`}>
+                      {data.bandwidth.status === 'active' ? '● Interface Running' : '● Disabled'}
+                    </span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="px-2.5 py-1 bg-slate-100 rounded-lg font-mono text-slate-600">
-                    MTU: 1500
-                  </span>
-                  <span className={`px-2.5 py-1 rounded-lg font-semibold ${data.bandwidth.status === 'active' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700'}`}>
-                    {data.bandwidth.status === 'active' ? '● Interface Running' : '● Disabled'}
-                  </span>
+
+                {/* Bandwidth Usage Stat Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  
+                  {/* Total Download */}
+                  <div className="bg-gradient-to-br from-cyan-50/70 to-cyan-100/30 p-5 rounded-2xl border border-cyan-200/80">
+                    <div className="flex items-center justify-between text-xs font-bold text-cyan-900 mb-1">
+                      <span className="uppercase tracking-wider">Total Downloaded (Rx)</span>
+                      <ArrowDownCircle className="w-4 h-4 text-cyan-600" />
+                    </div>
+                    <div className="text-3xl font-black font-mono text-slate-900 mt-2">
+                      {data.bandwidth.rxFormatted}
+                    </div>
+                    <p className="text-[11px] text-cyan-700 mt-1 font-medium">Inbound traffic consumed</p>
+                  </div>
+
+                  {/* Total Upload */}
+                  <div className="bg-gradient-to-br from-emerald-50/70 to-emerald-100/30 p-5 rounded-2xl border border-emerald-200/80">
+                    <div className="flex items-center justify-between text-xs font-bold text-emerald-900 mb-1">
+                      <span className="uppercase tracking-wider">Total Uploaded (Tx)</span>
+                      <ArrowUpCircle className="w-4 h-4 text-emerald-600" />
+                    </div>
+                    <div className="text-3xl font-black font-mono text-slate-900 mt-2">
+                      {data.bandwidth.txFormatted}
+                    </div>
+                    <p className="text-[11px] text-emerald-700 mt-1 font-medium">Outbound traffic transmitted</p>
+                  </div>
+
+                  {/* Total Combined */}
+                  <div className="bg-gradient-to-br from-slate-50 to-slate-100 p-5 rounded-2xl border border-slate-200">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-700 mb-1">
+                      <span className="uppercase tracking-wider">Total Data Transferred</span>
+                      <Globe className="w-4 h-4 text-slate-600" />
+                    </div>
+                    <div className="text-3xl font-black font-mono text-slate-900 mt-2">
+                      {data.bandwidth.totalFormatted}
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1 font-medium">Combined monthly transfer</p>
+                  </div>
                 </div>
               </div>
-
-              {/* Bandwidth Usage Stat Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                
-                {/* Total Download */}
-                <div className="bg-gradient-to-br from-cyan-50/70 to-cyan-100/30 p-5 rounded-2xl border border-cyan-200/80">
-                  <div className="flex items-center justify-between text-xs font-bold text-cyan-900 mb-1">
-                    <span className="uppercase tracking-wider">Total Downloaded (Rx)</span>
-                    <ArrowDownCircle className="w-4 h-4 text-cyan-600" />
-                  </div>
-                  <div className="text-3xl font-black font-mono text-slate-900 mt-2">
-                    {data.bandwidth.rxFormatted}
-                  </div>
-                  <p className="text-[11px] text-cyan-700 mt-1 font-medium">Inbound traffic consumed</p>
-                </div>
-
-                {/* Total Upload */}
-                <div className="bg-gradient-to-br from-emerald-50/70 to-emerald-100/30 p-5 rounded-2xl border border-emerald-200/80">
-                  <div className="flex items-center justify-between text-xs font-bold text-emerald-900 mb-1">
-                    <span className="uppercase tracking-wider">Total Uploaded (Tx)</span>
-                    <ArrowUpCircle className="w-4 h-4 text-emerald-600" />
-                  </div>
-                  <div className="text-3xl font-black font-mono text-slate-900 mt-2">
-                    {data.bandwidth.txFormatted}
-                  </div>
-                  <p className="text-[11px] text-emerald-700 mt-1 font-medium">Outbound traffic transmitted</p>
-                </div>
-
-                {/* Total Combined */}
-                <div className="bg-gradient-to-br from-slate-50 to-slate-100 p-5 rounded-2xl border border-slate-200">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-700 mb-1">
-                    <span className="uppercase tracking-wider">Total Data Transferred</span>
-                    <Globe className="w-4 h-4 text-slate-600" />
-                  </div>
-                  <div className="text-3xl font-black font-mono text-slate-900 mt-2">
-                    {data.bandwidth.totalFormatted}
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-1 font-medium">Combined monthly transfer</p>
-                </div>
-              </div>
-            </div>
+            )}
 
             {/* BOTTOM SECTION: CONNECTED HOME DEVICES (DHCP LIST) */}
-            {/* MANDATORY: DO NOT SHOW MAC ADDRESS, ONLY DEVICE NAME AND LOCAL IP */}
             <div className="bg-white rounded-2xl p-6 sm:p-7 border border-slate-200 shadow-sm space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-100">
                 <div className="flex items-center gap-2.5">
@@ -433,11 +495,11 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
                   </div>
                 </div>
                 <span className="px-3 py-1 bg-slate-100 text-slate-700 text-xs font-bold rounded-full font-mono">
-                  {data.devices.length} {data.devices.length === 1 ? 'Device' : 'Devices'} Connected
+                  {data.devices?.length || 0} {(data.devices?.length || 0) === 1 ? 'Device' : 'Devices'} Connected
                 </span>
               </div>
 
-              {data.devices.length === 0 ? (
+              {!data.devices || data.devices.length === 0 ? (
                 <div className="py-8 text-center text-slate-400 text-xs">
                   No active DHCP leases currently reported for your home VLAN.
                 </div>
@@ -453,7 +515,6 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
                           {getDeviceIcon(device.deviceName)}
                         </div>
                         <div className="min-w-0">
-                          {/* ONLY DEVICE NAME & LOCAL IP SHOWN — STRICTLY NO MAC ADDRESS */}
                           <div className="text-xs font-bold text-slate-900 truncate" title={device.deviceName}>
                             {device.deviceName}
                           </div>
@@ -527,3 +588,4 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
     </div>
   );
 };
+

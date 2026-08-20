@@ -1,6 +1,6 @@
 {
   "name": "FTTH Internet Subscriber Payment Tracker",
-  "description": "Monthly payment tracking, subscriber management, billing matrix, and revenue analytics dashboard for internet service providers.",
+  "description": "Public zero-auth subscriber self-service portal (due date, bandwidth usage, DHCP device list) with admin management console and MikroTik RB5009 automation.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

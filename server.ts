@@ -186,51 +186,36 @@ async function startServer() {
     }
   });
 
-  // Auth gatekeeper middleware for protected /api/* endpoints
-  app.use('/api', (req, res, next) => {
-    // Allow public auth and public subscriber portal endpoints (no authentication required)
-    if (
-      req.path.startsWith('/auth/login') ||
-      req.path.startsWith('/auth/me') ||
-      req.path.startsWith('/health') ||
-      req.path.startsWith('/portal')
-    ) {
-      return next();
-    }
-
-    const session = verifyAuth(req);
-    if (!session) {
-      return res.status(401).json({ error: 'Unauthorized. Please login to access this system.' });
-    }
-
-    (req as any).user = session;
-    next();
-  });
-
-  // --- PUBLIC SUBSCRIBER SELF-SERVICE PORTAL API (NO AUTHENTICATION) ---
+  // --- PUBLIC SUBSCRIBER SELF-SERVICE PORTAL API & HELPERS (NO AUTHENTICATION REQUIRED) ---
 
   // Helper to extract clean client IP
-  function getClientIp(req: express.Request): string {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string') {
-      const first = forwarded.split(',')[0].trim();
-      if (first) return cleanIpStr(first);
+  function cleanIpStr(ip: any): string {
+    if (!ip || typeof ip !== 'string') return '127.0.0.1';
+    const trimmed = ip.trim();
+    if (trimmed.startsWith('::ffff:')) {
+      return trimmed.substring(7);
     }
-    const realIp = req.headers['x-real-ip'];
-    if (typeof realIp === 'string' && realIp) {
-      return cleanIpStr(realIp);
-    }
-    if (req.socket.remoteAddress) {
-      return cleanIpStr(req.socket.remoteAddress);
-    }
-    return cleanIpStr(req.ip || '127.0.0.1');
+    return trimmed;
   }
 
-  function cleanIpStr(ip: string): string {
-    if (ip.startsWith('::ffff:')) {
-      return ip.substring(7);
+  function getClientIp(req: express.Request): string {
+    try {
+      const forwarded = req.headers['x-forwarded-for'];
+      if (typeof forwarded === 'string') {
+        const first = forwarded.split(',')[0].trim();
+        if (first) return cleanIpStr(first);
+      }
+      const realIp = req.headers['x-real-ip'];
+      if (typeof realIp === 'string' && realIp) {
+        return cleanIpStr(realIp);
+      }
+      if (req.socket && req.socket.remoteAddress) {
+        return cleanIpStr(req.socket.remoteAddress);
+      }
+      return cleanIpStr(req.ip || '127.0.0.1');
+    } catch {
+      return '127.0.0.1';
     }
-    return ip;
   }
 
   function formatBytesStr(bytes: number): string {
@@ -241,12 +226,47 @@ async function startServer() {
     return `${mb.toFixed(1)} MB`;
   }
 
+  // Public Subscriber Portal Subscribers List (for dynamic dropdown)
+  app.get('/api/portal/subscribers', async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    try {
+      const subscribers = await db.all('SELECT id, first, last, vlan, rate, status FROM subscribers ORDER BY dueDay ASC, id ASC');
+      const formatted = subscribers.map((s: any) => ({
+        id: s.id,
+        name: `${capitalizeWords(s.first || '')} ${capitalizeWords(s.last || '')}`.trim(),
+        vlan: s.vlan ? Number(s.vlan) : null,
+        rate: s.rate || 600,
+        status: s.status || 'Active',
+      }));
+      res.json({ success: true, subscribers: formatted });
+    } catch (err: any) {
+      res.json({ success: true, subscribers: [] });
+    }
+  });
+
   // Public Subscriber Portal Info (Auto-detected by VLAN or Client IP)
   app.get('/api/portal/subscriber-info', async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
     try {
-      const subscribers = await db.all('SELECT * FROM subscribers ORDER BY dueDay ASC, id ASC');
+      let subscribers: any[] = [];
+      try {
+        subscribers = await db.all('SELECT * FROM subscribers ORDER BY dueDay ASC, id ASC');
+      } catch (dbErr) {
+        console.warn('DB query in subscriber-info failed:', dbErr);
+      }
+
       if (!subscribers || subscribers.length === 0) {
-        return res.status(404).json({ error: 'No subscribers found in database' });
+        return res.json({
+          success: true,
+          noSubscribers: true,
+          detectedVlan: null,
+          detectedIp: getClientIp(req),
+          matchedBy: 'none',
+          subscriber: null,
+          billing: null,
+          bandwidth: null,
+          devices: [],
+        });
       }
 
       const clientIp = getClientIp(req);
@@ -302,14 +322,28 @@ async function startServer() {
         }
       }
 
-      // 4. Default fallback (first subscriber) if no match found (e.g. preview mode or test client)
+      // 4. Default fallback (first subscriber) if no match found
       let selectedSub = subscribers.find((s: any) => Number(s.vlan) === targetVlan);
       if (!selectedSub) {
         selectedSub = subscribers[0];
-        targetVlan = selectedSub.vlan ? Number(selectedSub.vlan) : 101;
+        targetVlan = selectedSub?.vlan ? Number(selectedSub.vlan) : 100;
         if (matchedBy !== 'vlan_param') {
           matchedBy = 'default';
         }
+      }
+
+      if (!selectedSub) {
+        return res.json({
+          success: true,
+          noSubscribers: true,
+          detectedVlan: null,
+          detectedIp: clientIp,
+          matchedBy: 'none',
+          subscriber: null,
+          billing: null,
+          bandwidth: null,
+          devices: [],
+        });
       }
 
       // Format subscriber name
@@ -318,7 +352,12 @@ async function startServer() {
       const fullName = `${firstName} ${lastName}`.trim();
 
       // Compute Billing & Due Date information
-      const payments = await db.all('SELECT * FROM payments WHERE sub = ? ORDER BY rowid DESC', [selectedSub.id]);
+      let payments: any[] = [];
+      try {
+        payments = await db.all('SELECT * FROM payments WHERE sub = ? ORDER BY rowid DESC', [selectedSub.id]);
+      } catch {
+        payments = [];
+      }
       const monthsPaidSet = new Set(payments.map((p: any) => p.month));
 
       const now = new Date();
@@ -390,7 +429,7 @@ async function startServer() {
 
       // Provide realistic default telemetry if in container/mock environment without live router traffic
       if (rxByte === 0 && txByte === 0) {
-        const baseSeed = (selectedSub.id * 137 + (now.getDate() * 41)) % 100;
+        const baseSeed = ((selectedSub.id || 1) * 137 + (now.getDate() * 41)) % 100;
         rxByte = Math.floor((12.5 + baseSeed * 0.35) * 1024 * 1024 * 1024);
         txByte = Math.floor((2.8 + baseSeed * 0.08) * 1024 * 1024 * 1024);
       }
@@ -439,20 +478,7 @@ async function startServer() {
           };
         });
       } else {
-        // Realistic home network connected devices for this subscriber VLAN
-        const devicePresets = [
-          { name: 'LivingRoom-SmartTV', ipSuffix: 15, status: 'bound', isStatic: false },
-          { name: 'iPhone-14-Pro', ipSuffix: 22, status: 'bound', isStatic: false },
-          { name: 'Android-Galaxy-Tab', ipSuffix: 34, status: 'bound', isStatic: false },
-          { name: 'HomeOffice-Laptop', ipSuffix: 50, status: 'bound', isStatic: true },
-        ];
-        devicesList = devicePresets.map((d, idx) => ({
-          id: `dev-${idx + 1}`,
-          deviceName: d.name,
-          ipAddress: `192.168.${targetVlan}.${d.ipSuffix}`,
-          status: d.status,
-          isStatic: d.isStatic,
-        }));
+        devicesList = [];
       }
 
       const responsePayload = {
@@ -461,16 +487,16 @@ async function startServer() {
         detectedIp: clientIp,
         matchedBy,
         subscriber: {
-          id: selectedSub.id,
-          name: fullName,
-          first: firstName,
-          last: lastName,
+          id: selectedSub.id || 1,
+          name: fullName || 'Fiber Subscriber',
+          first: firstName || 'Fiber',
+          last: lastName || 'Subscriber',
           rate: selectedSub.rate || 600,
           vlan: targetVlan,
-          status: selectedSub.status,
-          dueDay: selectedSub.dueDay,
-          address: selectedSub.address,
-          phone: selectedSub.phone,
+          status: selectedSub.status || 'Active',
+          dueDay: selectedSub.dueDay || 15,
+          address: selectedSub.address || '',
+          phone: selectedSub.phone || '',
         },
         billing: {
           currentMonth: currentMonthStr,
@@ -492,9 +518,310 @@ async function startServer() {
         devices: devicesList, // STRICTLY NO MAC ADDRESSES INCLUDED
       };
 
-      res.json(responsePayload);
+      return res.json(responsePayload);
     } catch (err: any) {
       console.error('Error serving subscriber portal info:', err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || 'Failed to retrieve subscriber info',
+        noSubscribers: true,
+      });
+    }
+  });
+
+  // Auth gatekeeper middleware for protected /api/* endpoints
+  app.use('/api', (req, res, next) => {
+    // Allow public auth, public subscriber portal, and optical fiber budget endpoints (no authentication required)
+    if (
+      req.path.startsWith('/auth/login') ||
+      req.path.startsWith('/auth/me') ||
+      req.path.startsWith('/health') ||
+      req.path.startsWith('/portal') ||
+      req.path.startsWith('/fiber-budget')
+    ) {
+      return next();
+    }
+
+    const session = verifyAuth(req);
+    if (!session) {
+      return res.status(401).json({ error: 'Unauthorized. Please login to access this system.' });
+    }
+
+    (req as any).user = session;
+    next();
+  });
+
+  // --- FIBER LIGHT BUDGET PROFILES (SQLITE PERSISTENCE) ---
+  app.get('/api/fiber-budget/profiles', async (req, res) => {
+    try {
+      const rows = await db.all('SELECT * FROM fiber_budget_profiles ORDER BY rowid ASC');
+      const profiles = rows.map((r: any) => {
+        let ponPorts: any[] = [];
+        if (r.ponPortsJson) {
+          try {
+            ponPorts = JSON.parse(r.ponPortsJson);
+          } catch (e) {}
+        }
+        const items = r.itemsJson ? JSON.parse(r.itemsJson) : [];
+        if (!ponPorts || ponPorts.length === 0) {
+          ponPorts = [
+            {
+              id: 'pon-1',
+              name: 'PON 1 (Main Feeder)',
+              portNumber: 1,
+              txPowerDbm: Number(r.txPowerDbm) || 5.5,
+              wavelengthNm: Number(r.wavelengthNm) || 1490,
+              items: items,
+            },
+          ];
+        }
+
+        return {
+          id: r.id,
+          title: r.title,
+          description: r.description || '',
+          txPowerDbm: Number(r.txPowerDbm),
+          wavelengthNm: Number(r.wavelengthNm),
+          targetRxMinDbm: Number(r.targetRxMinDbm),
+          targetRxMaxDbm: Number(r.targetRxMaxDbm),
+          targetOptimalMinDbm: Number(r.targetOptimalMinDbm),
+          targetOptimalMaxDbm: Number(r.targetOptimalMaxDbm),
+          measuredRxDbm: r.measuredRxDbm !== null && r.measuredRxDbm !== undefined ? Number(r.measuredRxDbm) : null,
+          updatedAt: r.updatedAt,
+          items: items,
+          ponPorts: ponPorts,
+          activePonPortId: r.activePonPortId || ponPorts[0]?.id || 'pon-1',
+        };
+      });
+
+      const activeSetting = await db.get('SELECT value FROM fiber_budget_settings WHERE key = ?', ['active_profile_id']);
+      const activeProfileId = activeSetting ? activeSetting.value : (profiles[0]?.id || 'prof-default-epon');
+
+      res.json({ profiles, activeProfileId });
+    } catch (err: any) {
+      console.error('Error getting fiber budget profiles:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/fiber-budget/profiles', async (req, res) => {
+    try {
+      const {
+        id,
+        title,
+        description,
+        txPowerDbm,
+        wavelengthNm,
+        targetRxMinDbm,
+        targetRxMaxDbm,
+        targetOptimalMinDbm,
+        targetOptimalMaxDbm,
+        measuredRxDbm,
+        items,
+        ponPorts,
+        activePonPortId,
+        updatedAt
+      } = req.body;
+
+      if (!id || !title) {
+        return res.status(400).json({ error: 'Profile id and title are required' });
+      }
+
+      const existing = await db.get('SELECT id FROM fiber_budget_profiles WHERE id = ?', [id]);
+      const nowStr = updatedAt || new Date().toISOString();
+      const itemsJson = JSON.stringify(items || []);
+      const ponPortsJson = JSON.stringify(ponPorts || []);
+      const activePonId = activePonPortId || (ponPorts && ponPorts[0]?.id) || 'pon-1';
+
+      if (existing) {
+        await db.run(
+          `UPDATE fiber_budget_profiles SET 
+            title = ?, description = ?, txPowerDbm = ?, wavelengthNm = ?, 
+            targetRxMinDbm = ?, targetRxMaxDbm = ?, targetOptimalMinDbm = ?, targetOptimalMaxDbm = ?, 
+            measuredRxDbm = ?, itemsJson = ?, ponPortsJson = ?, activePonPortId = ?, updatedAt = ? 
+          WHERE id = ?`,
+          [
+            title,
+            description || '',
+            Number(txPowerDbm) || 0,
+            Number(wavelengthNm) || 1490,
+            Number(targetRxMinDbm) || -27.0,
+            Number(targetRxMaxDbm) || -6.0,
+            Number(targetOptimalMinDbm) || -24.0,
+            Number(targetOptimalMaxDbm) || -14.0,
+            measuredRxDbm !== undefined && measuredRxDbm !== null ? Number(measuredRxDbm) : null,
+            itemsJson,
+            ponPortsJson,
+            activePonId,
+            nowStr,
+            id
+          ]
+        );
+      } else {
+        await db.run(
+          `INSERT INTO fiber_budget_profiles 
+          (id, title, description, txPowerDbm, wavelengthNm, targetRxMinDbm, targetRxMaxDbm, targetOptimalMinDbm, targetOptimalMaxDbm, measuredRxDbm, itemsJson, ponPortsJson, activePonPortId, updatedAt) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            id,
+            title,
+            description || '',
+            Number(txPowerDbm) || 0,
+            Number(wavelengthNm) || 1490,
+            Number(targetRxMinDbm) || -27.0,
+            Number(targetRxMaxDbm) || -6.0,
+            Number(targetOptimalMinDbm) || -24.0,
+            Number(targetOptimalMaxDbm) || -14.0,
+            measuredRxDbm !== undefined && measuredRxDbm !== null ? Number(measuredRxDbm) : null,
+            itemsJson,
+            ponPortsJson,
+            activePonId,
+            nowStr
+          ]
+        );
+      }
+
+      res.json({ success: true, id, message: 'Profile saved to SQLite database' });
+    } catch (err: any) {
+      console.error('Error saving fiber budget profile:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/fiber-budget/profiles/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const {
+        title,
+        description,
+        txPowerDbm,
+        wavelengthNm,
+        targetRxMinDbm,
+        targetRxMaxDbm,
+        targetOptimalMinDbm,
+        targetOptimalMaxDbm,
+        measuredRxDbm,
+        items,
+        ponPorts,
+        activePonPortId,
+        updatedAt
+      } = req.body;
+
+      const nowStr = updatedAt || new Date().toISOString();
+      const itemsJson = JSON.stringify(items || []);
+      const ponPortsJson = JSON.stringify(ponPorts || []);
+      const activePonId = activePonPortId || (ponPorts && ponPorts[0]?.id) || 'pon-1';
+
+      await db.run(
+        `UPDATE fiber_budget_profiles SET 
+          title = ?, description = ?, txPowerDbm = ?, wavelengthNm = ?, 
+          targetRxMinDbm = ?, targetRxMaxDbm = ?, targetOptimalMinDbm = ?, targetOptimalMaxDbm = ?, 
+          measuredRxDbm = ?, itemsJson = ?, ponPortsJson = ?, activePonPortId = ?, updatedAt = ? 
+        WHERE id = ?`,
+        [
+          title,
+          description || '',
+          Number(txPowerDbm) || 0,
+          Number(wavelengthNm) || 1490,
+          Number(targetRxMinDbm) || -27.0,
+          Number(targetRxMaxDbm) || -6.0,
+          Number(targetOptimalMinDbm) || -24.0,
+          Number(targetOptimalMaxDbm) || -14.0,
+          measuredRxDbm !== undefined && measuredRxDbm !== null ? Number(measuredRxDbm) : null,
+          itemsJson,
+          ponPortsJson,
+          activePonId,
+          nowStr,
+          id
+        ]
+      );
+
+      res.json({ success: true, id, message: 'Profile updated in SQLite database' });
+    } catch (err: any) {
+      console.error('Error updating fiber budget profile:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/fiber-budget/profiles/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      await db.run('DELETE FROM fiber_budget_profiles WHERE id = ?', [id]);
+      res.json({ success: true, id, message: 'Profile deleted from SQLite database' });
+    } catch (err: any) {
+      console.error('Error deleting fiber budget profile:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/fiber-budget/active-profile', async (req, res) => {
+    try {
+      const { activeProfileId } = req.body;
+      if (activeProfileId) {
+        await db.run('INSERT OR REPLACE INTO fiber_budget_settings (key, value) VALUES (?, ?)', ['active_profile_id', activeProfileId]);
+      }
+      res.json({ success: true, activeProfileId });
+    } catch (err: any) {
+      console.error('Error setting active fiber budget profile:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/fiber-budget/reset', async (req, res) => {
+    try {
+      const blankProfile = {
+        id: 'prof-default-epon',
+        title: 'EPON Optical Link Budget',
+        description: 'EPON 1490nm (SC/UPC) Link Budget',
+        txPowerDbm: 5.0,
+        wavelengthNm: 1490,
+        targetRxMinDbm: -27.0,
+        targetRxMaxDbm: -6.0,
+        targetOptimalMinDbm: -24.0,
+        targetOptimalMaxDbm: -14.0,
+        measuredRxDbm: null,
+        items: [],
+        ponPorts: [
+          {
+            id: 'pon-1',
+            name: 'PON 1',
+            portNumber: 1,
+            txPowerDbm: 5.0,
+            wavelengthNm: 1490,
+            items: [],
+          },
+        ],
+        activePonPortId: 'pon-1',
+        updatedAt: new Date().toISOString(),
+      };
+
+      await db.run('DELETE FROM fiber_budget_profiles');
+      await db.run(
+        `INSERT INTO fiber_budget_profiles 
+        (id, title, description, txPowerDbm, wavelengthNm, targetRxMinDbm, targetRxMaxDbm, targetOptimalMinDbm, targetOptimalMaxDbm, measuredRxDbm, itemsJson, ponPortsJson, activePonPortId, updatedAt) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          blankProfile.id,
+          blankProfile.title,
+          blankProfile.description,
+          blankProfile.txPowerDbm,
+          blankProfile.wavelengthNm,
+          blankProfile.targetRxMinDbm,
+          blankProfile.targetRxMaxDbm,
+          blankProfile.targetOptimalMinDbm,
+          blankProfile.targetOptimalMaxDbm,
+          blankProfile.measuredRxDbm,
+          JSON.stringify(blankProfile.items),
+          JSON.stringify(blankProfile.ponPorts),
+          blankProfile.activePonPortId,
+          blankProfile.updatedAt
+        ]
+      );
+      await db.run('INSERT OR REPLACE INTO fiber_budget_settings (key, value) VALUES (?, ?)', ['active_profile_id', blankProfile.id]);
+
+      res.json({ success: true, profiles: [blankProfile], activeProfileId: blankProfile.id });
+    } catch (err: any) {
+      console.error('Error resetting fiber budget profile:', err);
       res.status(500).json({ error: err.message });
     }
   });

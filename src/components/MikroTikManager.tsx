@@ -512,7 +512,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                     }
 
                     const assignedSubs = subscribers.filter((s) => {
-                      if (s.vlan === null || s.vlan === undefined || s.vlan === '' || Number.isNaN(Number(s.vlan))) return false;
+                      if (s.vlan === null || s.vlan === undefined || Number.isNaN(Number(s.vlan))) return false;
                       if (effectiveVlan !== undefined && Number(s.vlan) === Number(effectiveVlan)) return true;
                       const sVlanStr = String(s.vlan).trim();
                       if (!sVlanStr) return false;

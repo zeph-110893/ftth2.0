@@ -240,7 +240,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onOpenSubs
               </button>
             </div>
 
-            {/* Public Subscriber Self-Service Portal Entry */}
+            {/* Return to Subscriber Portal (Main Page) */}
             {onOpenSubscriberPortal && (
               <div className="mt-4 pt-4 border-t border-slate-800/50 text-center">
                 <button
@@ -249,10 +249,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onOpenSubs
                   className="w-full py-2.5 px-4 bg-slate-800/80 hover:bg-slate-800 text-cyan-400 hover:text-cyan-300 border border-slate-700/80 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm hover:border-cyan-500/40"
                 >
                   <Wifi className="w-4 h-4 text-cyan-400" />
-                  <span>Subscriber Portal (No Login Required)</span>
+                  <span>← Return to Subscriber Portal (Main Page)</span>
                 </button>
                 <p className="text-[10px] text-slate-500 mt-1.5">
-                  Subscribers: View your due date, live bandwidth usage & connected devices
+                  Looking for your fiber bill, due date or live bandwidth? No login required.
                 </p>
               </div>
             )}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Users, BarChart3, Receipt, AlertTriangle, Router } from 'lucide-react';
+import { Users, BarChart3, Receipt, AlertTriangle, Router, Zap } from 'lucide-react';
 import { ViewTab } from '../types';
 
 interface NavigationTabsProps {
@@ -44,6 +44,11 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
       id: 'mikrotik' as ViewTab,
       label: 'MikroTik RouterOS',
       icon: Router,
+    },
+    {
+      id: 'light_budget' as ViewTab,
+      label: 'Light Budget (dBm)',
+      icon: Zap,
     },
   ];
 

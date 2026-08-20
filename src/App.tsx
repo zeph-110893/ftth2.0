@@ -19,14 +19,21 @@ import { RecordPaymentModal } from './components/RecordPaymentModal';
 import { AddSubscriberModal } from './components/AddSubscriberModal';
 import { AddExpenseModal } from './components/AddExpenseModal';
 import { SubscriberPortal } from './components/SubscriberPortal';
+import { FiberLightBudget } from './components/FiberLightBudget';
 
 export default function App() {
-  // Subscriber Portal view state (no authentication required)
-  const [isViewingPortal, setIsViewingPortal] = useState<boolean>(() => {
+  // Main View state: Subscriber Portal is the default main landing page (no authentication required).
+  // Admin management / login is accessed via the Admin Login button or /admin route.
+  const [isAdminView, setIsAdminView] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const path = window.location.pathname.toLowerCase();
       const search = window.location.search.toLowerCase();
-      return path.startsWith('/portal') || search.includes('portal') || search.includes('vlan=');
+      return (
+        path.startsWith('/admin') ||
+        path.startsWith('/login') ||
+        search.includes('admin') ||
+        search.includes('view=admin')
+      );
     }
     return false;
   });
@@ -45,6 +52,38 @@ export default function App() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastSyncedTime, setLastSyncedTime] = useState<Date>(new Date());
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  // Sync browser back/forward buttons with admin/portal views
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname.toLowerCase();
+      const search = window.location.search.toLowerCase();
+      setIsAdminView(
+        path.startsWith('/admin') ||
+        path.startsWith('/login') ||
+        search.includes('admin') ||
+        search.includes('view=admin')
+      );
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Navigation helpers
+  const navigateToAdmin = () => {
+    setIsAdminView(true);
+    if (typeof window !== 'undefined' && window.history?.pushState) {
+      window.history.pushState({}, '', '/admin');
+    }
+  };
+
+  const navigateToSubscriberPortal = () => {
+    setIsAdminView(false);
+    if (typeof window !== 'undefined' && window.history?.pushState) {
+      window.history.pushState({}, '', '/');
+    }
+  };
 
   // Check existing session validity on mount
   useEffect(() => {
@@ -324,16 +363,11 @@ export default function App() {
     }
   };
 
-  // If subscriber portal is requested (no authentication required)
-  if (isViewingPortal) {
+  // Default Landing Page: Subscriber Portal (no authentication required)
+  if (!isAdminView) {
     return (
       <SubscriberPortal
-        onOpenAdminLogin={() => {
-          setIsViewingPortal(false);
-          if (window.history && window.history.pushState) {
-            window.history.pushState({}, '', '/');
-          }
-        }}
+        onOpenAdminLogin={navigateToAdmin}
       />
     );
   }
@@ -342,22 +376,20 @@ export default function App() {
   if (isAuthChecking) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400 gap-3">
-        <div className="w-9 h-9 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+        <div className="w-9 h-9 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin" />
         <span className="text-xs font-semibold tracking-wide text-slate-300">Checking authorization...</span>
       </div>
     );
   }
 
-  // If not logged in, render the secure Login Page with Subscriber Portal access button
+  // If not logged in, render the secure Login Page with back to Subscriber Portal button
   if (!currentUser) {
     return (
       <LoginPage
         onLoginSuccess={(user) => {
           setCurrentUser(user);
         }}
-        onOpenSubscriberPortal={() => {
-          setIsViewingPortal(true);
-        }}
+        onOpenSubscriberPortal={navigateToSubscriberPortal}
       />
     );
   }
@@ -382,12 +414,15 @@ export default function App() {
           setIsAddExpenseOpen(true);
         }}
         onOpenDatabaseModal={() => setIsDatabaseModalOpen(true)}
-        onOpenSubscriberPortal={() => setIsViewingPortal(true)}
+        onOpenSubscriberPortal={navigateToSubscriberPortal}
         onRefresh={() => fetchData(true)}
         isSyncing={isSyncing}
         currentUser={currentUser}
         onOpenChangePassword={() => setIsChangePasswordOpen(true)}
-        onLogout={handleLogout}
+        onLogout={async () => {
+          await handleLogout();
+          navigateToSubscriberPortal();
+        }}
         totalSubsCount={subscribers.length}
         activeCount={activeCount}
         dueCount={dueCount}
@@ -472,6 +507,10 @@ export default function App() {
                 payments={payments}
                 onRefreshData={fetchData}
               />
+            )}
+
+            {currentTab === 'light_budget' && (
+              <FiberLightBudget />
             )}
           </>
         )}
