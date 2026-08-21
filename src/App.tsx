@@ -19,7 +19,6 @@ import { RecordPaymentModal } from './components/RecordPaymentModal';
 import { AddSubscriberModal } from './components/AddSubscriberModal';
 import { AddExpenseModal } from './components/AddExpenseModal';
 import { SubscriberPortal } from './components/SubscriberPortal';
-import { FiberLightBudget } from './components/FiberLightBudget';
 
 export default function App() {
   // Main View state: Subscriber Portal is the default main landing page (no authentication required).
@@ -507,10 +506,6 @@ export default function App() {
                 payments={payments}
                 onRefreshData={fetchData}
               />
-            )}
-
-            {currentTab === 'light_budget' && (
-              <FiberLightBudget />
             )}
           </>
         )}

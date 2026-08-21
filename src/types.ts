@@ -132,70 +132,7 @@ export interface AuthUser {
   role: string;
 }
 
-export type ViewTab = 'subscribers' | 'analytics' | 'expenses' | 'overdue' | 'mikrotik' | 'light_budget';
-
-export type FiberComponentCategory = 'splitter' | 'cable' | 'splice' | 'connector' | 'attenuator' | 'margin' | 'onu' | 'other';
-
-export interface FiberSplitterPort {
-  id: string;
-  portNumber: number;
-  label: string; // e.g. "Port 1 - Main Trunk (NAP-01)"
-  lossOffsetDb?: number; // Custom loss or unequal tap drop/thru delta
-  subItems?: FiberBudgetItem[]; // Nested secondary components under this specific port (e.g. secondary 1:8 NAP, drop line)
-  status?: 'active' | 'spare' | 'reserved' | 'fault';
-  isActiveTrace?: boolean; // Whether this branch is active in the primary receiver trace
-  notes?: string;
-}
-
-export interface FiberBudgetItem {
-  id: string;
-  name: string;
-  category: FiberComponentCategory;
-  quantity: number;
-  unit: string;
-  lossPerUnit: number; // in dB
-  totalLoss: number;   // quantity * lossPerUnit (in dB)
-  enabled: boolean;
-  notes?: string;
-  // Multi-Port & Nested Splitter Branching:
-  splitterRatio?: string; // '1:2' | '1:4' | '1:8' | '1:16' | '1:32' | '1:64' | '90/10' | '80/20' | '70/30' | 'custom'
-  portCount?: number;
-  activePortId?: string;
-  ports?: FiberSplitterPort[];
-  children?: FiberBudgetItem[]; // Hierarchical nested child splitters & downstream items
-  // ONU Specific Metadata
-  onuModel?: string;            // e.g. 'EPON 1GE ONU', 'XPON Dual-Band AC1200', 'Huawei HG8245H'
-  onuSubscriber?: string;       // e.g. 'Juan Dela Cruz (Account #1042)'
-  onuSerial?: string;           // e.g. 'EPON0012FA3B'
-  onuTargetSensitivity?: number;// e.g. -27.0 dBm
-}
-
-export interface FiberPonPort {
-  id: string;
-  name: string; // e.g. "PON 1 (Main Feeder)", "PON 2 (North Loop)"
-  portNumber: number; // 1, 2, 3, 4...
-  txPowerDbm: number; // Manual dBm per PON port (e.g. +5.5, +7.0, +4.0)
-  wavelengthNm?: number; // default 1490
-  items: FiberBudgetItem[];
-  notes?: string;
-}
-
-export interface FiberBudgetProfile {
-  id: string;
-  title: string;
-  description?: string;
-  txPowerDbm: number;        // Transmit power from OLT SFP (e.g. +3.0, +5.0, +7.0 dBm)
-  wavelengthNm: number;      // e.g. 1490 for GPON downstream, 1310, 1550, 1577
-  targetRxMinDbm: number;    // Receiver sensitivity floor (e.g. -27.0 dBm)
-  targetRxMaxDbm: number;    // Receiver overload ceiling (e.g. -8.0 dBm)
-  targetOptimalMinDbm: number; // e.g. -24.0 dBm
-  targetOptimalMaxDbm: number; // e.g. -15.0 dBm
-  measuredRxDbm?: number | null; // Optional live field measurement from optical power meter (OPM)
-  items: FiberBudgetItem[];
-  ponPorts?: FiberPonPort[]; // Multiple PON ports under OLT
-  activePonPortId?: string;  // Currently focused PON port
-  updatedAt: string;
-}
+export type ViewTab = 'subscribers' | 'analytics' | 'expenses' | 'overdue' | 'mikrotik';
 
 export interface SubscriberPortalDevice {
   id: string;
