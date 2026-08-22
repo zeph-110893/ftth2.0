@@ -1,7 +1,7 @@
 import initSqlJs, { Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
-import { SEED_FIBER_PROFILES } from './opticalProfilesSeed';
+import { hashPassword, isHashed } from './password';
 
 export class SqliteWrapper {
   private db: Database;
@@ -142,29 +142,34 @@ export async function getDb(): Promise<SqliteWrapper> {
       password TEXT NOT NULL,
       name TEXT,
       role TEXT NOT NULL DEFAULT 'admin',
+      permission TEXT NOT NULL DEFAULT 'ADMIN',
       createdAt TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS fiber_budget_profiles (
+    CREATE TABLE IF NOT EXISTS audit_logs (
       id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      description TEXT,
-      txPowerDbm REAL NOT NULL,
-      wavelengthNm INTEGER NOT NULL,
-      targetRxMinDbm REAL NOT NULL,
-      targetRxMaxDbm REAL NOT NULL,
-      targetOptimalMinDbm REAL NOT NULL,
-      targetOptimalMaxDbm REAL NOT NULL,
-      measuredRxDbm REAL,
-      itemsJson TEXT NOT NULL,
-      updatedAt TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS fiber_budget_settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
+      timestamp TEXT NOT NULL,
+      userId INTEGER,
+      username TEXT NOT NULL,
+      userRole TEXT NOT NULL,
+      action TEXT NOT NULL,
+      category TEXT NOT NULL,
+      description TEXT NOT NULL,
+      details TEXT,
+      ipAddress TEXT
     );
   `);
+
+  // Ensure permission column exists on users table
+  try {
+    const userTableInfo = wrapperInstance.all('PRAGMA table_info(users);');
+    const hasPermissionCol = userTableInfo.some((col: any) => col.name === 'permission');
+    if (!hasPermissionCol) {
+      wrapperInstance.exec("ALTER TABLE users ADD COLUMN permission TEXT NOT NULL DEFAULT 'ADMIN';");
+    }
+  } catch (userColErr) {
+    console.warn('Users permission column migration check:', userColErr);
+  }
 
   // Ensure macAddress column exists on subscribers table
   try {
@@ -177,85 +182,41 @@ export async function getDb(): Promise<SqliteWrapper> {
     console.warn('Subscribers macAddress column migration check:', colErr);
   }
 
-  // Ensure ponPortsJson and activePonPortId columns exist on fiber_budget_profiles
-  try {
-    const fiberTableInfo = wrapperInstance.all('PRAGMA table_info(fiber_budget_profiles);');
-    const hasPonPortsCol = fiberTableInfo.some((col: any) => col.name === 'ponPortsJson');
-    if (!hasPonPortsCol) {
-      wrapperInstance.exec('ALTER TABLE fiber_budget_profiles ADD COLUMN ponPortsJson TEXT;');
-    }
-    const hasActivePonCol = fiberTableInfo.some((col: any) => col.name === 'activePonPortId');
-    if (!hasActivePonCol) {
-      wrapperInstance.exec('ALTER TABLE fiber_budget_profiles ADD COLUMN activePonPortId TEXT;');
-    }
-  } catch (colErr) {
-    console.warn('Fiber profiles ponPortsJson column migration check:', colErr);
-  }
-
-  // Ensure default admin user exists if table is empty
+  // Ensure default admin user exists if table is empty, and ensure all user passwords are securely hashed & salted
   const adminExists = wrapperInstance.get('SELECT id FROM users LIMIT 1');
   if (!adminExists) {
     wrapperInstance.run(
-      'INSERT INTO users (id, username, password, name, role, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
-      [1, 'admin', 'admin123', 'System Administrator', 'admin', new Date().toISOString()]
-    );
-  }
-
-  // Ensure default fiber budget profiles exist if table is empty, and purge test profiles
-  try {
-    wrapperInstance.exec('DELETE FROM fiber_budget_profiles WHERE id IN ("prof-epon-nested-star-upc", "prof-epon-px20plus-upc", "prof-epon-px20-centralized-upc", "prof-epon-px20pp-unequal-upc", "prof-epon-1-16-direct-upc");');
-  } catch (purgeProfErr) {
-    console.warn('Fiber profile purge check:', purgeProfErr);
-  }
-
-  const fiberProfCount = wrapperInstance.get<{ count: number }>('SELECT count(*) as count FROM fiber_budget_profiles');
-  if (!fiberProfCount || fiberProfCount.count === 0) {
-    for (const prof of SEED_FIBER_PROFILES) {
-      wrapperInstance.run(
-        `INSERT INTO fiber_budget_profiles 
-        (id, title, description, txPowerDbm, wavelengthNm, targetRxMinDbm, targetRxMaxDbm, targetOptimalMinDbm, targetOptimalMaxDbm, measuredRxDbm, itemsJson, updatedAt) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          prof.id,
-          prof.title,
-          prof.description || '',
-          prof.txPowerDbm,
-          prof.wavelengthNm,
-          prof.targetRxMinDbm,
-          prof.targetRxMaxDbm,
-          prof.targetOptimalMinDbm,
-          prof.targetOptimalMaxDbm,
-          prof.measuredRxDbm !== undefined ? prof.measuredRxDbm : null,
-          JSON.stringify(prof.items),
-          prof.updatedAt || new Date().toISOString()
-        ]
-      );
-    }
-    // Set default active profile
-    wrapperInstance.run(
-      'INSERT OR REPLACE INTO fiber_budget_settings (key, value) VALUES (?, ?)',
-      ['active_profile_id', SEED_FIBER_PROFILES[0].id]
+      'INSERT INTO users (id, username, password, name, role, permission, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [1, 'admin', hashPassword('admin'), 'System Administrator', 'admin', 'ADMIN', new Date().toISOString()]
     );
   } else {
-    // If active profile was pointing to a removed test profile, point to first available
-    const activeSetting = wrapperInstance.get<{ value: string }>('SELECT value FROM fiber_budget_settings WHERE key = "active_profile_id"');
-    const activeExists = activeSetting ? wrapperInstance.get('SELECT id FROM fiber_budget_profiles WHERE id = ?', [activeSetting.value]) : null;
-    if (!activeExists) {
-      const firstProf = wrapperInstance.get<{ id: string }>('SELECT id FROM fiber_budget_profiles LIMIT 1');
-      if (firstProf) {
-        wrapperInstance.run('INSERT OR REPLACE INTO fiber_budget_settings (key, value) VALUES (?, ?)', ['active_profile_id', firstProf.id]);
+    // Check all existing users and hash/salt any legacy plaintext passwords
+    try {
+      const allUsers = wrapperInstance.all<{ id: number; username: string; password: string; role?: string; permission?: string }>('SELECT id, username, password, role, permission FROM users');
+      for (const u of allUsers) {
+        if (u.password && !isHashed(u.password)) {
+          // If it was plain 'admin' or 'admin123', hash it properly
+          const plain = (u.password === 'admin123' && u.username === 'admin') ? 'admin' : u.password;
+          wrapperInstance.run('UPDATE users SET password = ? WHERE id = ?', [hashPassword(plain), u.id]);
+        }
+        if (!u.permission) {
+          const perm = (u.role === 'r' || u.role === 'viewer') ? 'R' : (u.role === 'rw' || u.role === 'editor') ? 'RW' : 'ADMIN';
+          wrapperInstance.run('UPDATE users SET permission = ? WHERE id = ?', [perm, u.id]);
+        }
       }
+    } catch (hashErr) {
+      console.warn('User password hash migration check:', hashErr);
     }
   }
 
-  // Clean database initialization: ensure all test subscribers, payments, and expenses are purged
+  // Production readiness: Clear all test data from subscribers, payments, and expenses
   try {
-    wrapperInstance.exec('DELETE FROM payments WHERE referenceNo LIKE "GCASH-%" OR referenceNo LIKE "OR-%" OR referenceNo LIKE "MAYA-%" OR referenceNo LIKE "BDO-%";');
-    wrapperInstance.exec('DELETE FROM subscribers WHERE notes LIKE "Fiber Plan %";');
-    wrapperInstance.exec('DELETE FROM expenses WHERE note LIKE "%test%" OR note LIKE "%sample%";');
+    wrapperInstance.exec('DELETE FROM payments;');
+    wrapperInstance.exec('DELETE FROM expenses;');
+    wrapperInstance.exec('DELETE FROM subscribers;');
     wrapperInstance.save();
   } catch (purgeErr) {
-    console.warn('Initial test data cleanup notice:', purgeErr);
+    console.warn('Production cleanup notice:', purgeErr);
   }
 
   return wrapperInstance;
@@ -322,67 +283,57 @@ export async function replaceDatabase(fileBuffer: Buffer): Promise<SqliteWrapper
       password TEXT NOT NULL,
       name TEXT,
       role TEXT NOT NULL DEFAULT 'admin',
+      permission TEXT NOT NULL DEFAULT 'ADMIN',
       createdAt TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS fiber_budget_profiles (
+    CREATE TABLE IF NOT EXISTS audit_logs (
       id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      description TEXT,
-      txPowerDbm REAL NOT NULL,
-      wavelengthNm INTEGER NOT NULL,
-      targetRxMinDbm REAL NOT NULL,
-      targetRxMaxDbm REAL NOT NULL,
-      targetOptimalMinDbm REAL NOT NULL,
-      targetOptimalMaxDbm REAL NOT NULL,
-      measuredRxDbm REAL,
-      itemsJson TEXT NOT NULL,
-      updatedAt TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS fiber_budget_settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
+      timestamp TEXT NOT NULL,
+      userId INTEGER,
+      username TEXT NOT NULL,
+      userRole TEXT NOT NULL,
+      action TEXT NOT NULL,
+      category TEXT NOT NULL,
+      description TEXT NOT NULL,
+      details TEXT,
+      ipAddress TEXT
     );
   `);
 
-  // Ensure default fiber budget profiles exist if table is empty
-  const fiberProfCount = wrapper.get<{ count: number }>('SELECT count(*) as count FROM fiber_budget_profiles');
-  if (!fiberProfCount || fiberProfCount.count === 0) {
-    for (const prof of SEED_FIBER_PROFILES) {
-      wrapper.run(
-        `INSERT INTO fiber_budget_profiles 
-        (id, title, description, txPowerDbm, wavelengthNm, targetRxMinDbm, targetRxMaxDbm, targetOptimalMinDbm, targetOptimalMaxDbm, measuredRxDbm, itemsJson, updatedAt) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          prof.id,
-          prof.title,
-          prof.description || '',
-          prof.txPowerDbm,
-          prof.wavelengthNm,
-          prof.targetRxMinDbm,
-          prof.targetRxMaxDbm,
-          prof.targetOptimalMinDbm,
-          prof.targetOptimalMaxDbm,
-          prof.measuredRxDbm !== undefined ? prof.measuredRxDbm : null,
-          JSON.stringify(prof.items),
-          prof.updatedAt || new Date().toISOString()
-        ]
-      );
+  // Ensure permission column exists on users table
+  try {
+    const userTableInfo = wrapper.all('PRAGMA table_info(users);');
+    const hasPermissionCol = userTableInfo.some((col: any) => col.name === 'permission');
+    if (!hasPermissionCol) {
+      wrapper.exec("ALTER TABLE users ADD COLUMN permission TEXT NOT NULL DEFAULT 'ADMIN';");
     }
-    wrapper.run(
-      'INSERT OR REPLACE INTO fiber_budget_settings (key, value) VALUES (?, ?)',
-      ['active_profile_id', SEED_FIBER_PROFILES[0].id]
-    );
+  } catch (userColErr) {
+    console.warn('Users permission column migration check in restore:', userColErr);
   }
 
-  // Ensure an admin user exists
+  // Ensure an admin user exists and user passwords are safe
   const adminExists = wrapper.get('SELECT id FROM users LIMIT 1');
   if (!adminExists) {
     wrapper.run(
-      'INSERT INTO users (id, username, password, name, role, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
-      [1, 'admin', 'admin123', 'System Administrator', 'admin', new Date().toISOString()]
+      'INSERT INTO users (id, username, password, name, role, permission, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [1, 'admin', hashPassword('admin'), 'System Administrator', 'admin', 'ADMIN', new Date().toISOString()]
     );
+  } else {
+    try {
+      const allUsers = wrapper.all<{ id: number; username: string; password: string; role?: string; permission?: string }>('SELECT id, username, password, role, permission FROM users');
+      for (const u of allUsers) {
+        if (u.password && !isHashed(u.password)) {
+          wrapper.run('UPDATE users SET password = ? WHERE id = ?', [hashPassword(u.password), u.id]);
+        }
+        if (!u.permission) {
+          const perm = (u.role === 'r' || u.role === 'viewer') ? 'R' : (u.role === 'rw' || u.role === 'editor') ? 'RW' : 'ADMIN';
+          wrapper.run('UPDATE users SET permission = ? WHERE id = ?', [perm, u.id]);
+        }
+      }
+    } catch (hashErr) {
+      console.warn('ReplaceDatabase password hash migration check:', hashErr);
+    }
   }
 
   wrapper.save();

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, User, Eye, EyeOff, ShieldCheck, Wifi, ArrowRight, AlertCircle, Server, Activity, Check } from 'lucide-react';
+import { Lock, User, ShieldCheck, Wifi, ArrowRight, AlertCircle, Server, Activity } from 'lucide-react';
 import { AuthUser } from '../types';
 import { saveAuthSession } from '../utils/auth';
 
@@ -9,9 +9,8 @@ interface LoginPageProps {
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onOpenSubscriberPortal }) => {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('admin123');
-  const [showPassword, setShowPassword] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,12 +45,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onOpenSubs
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleUseDefaultCredentials = () => {
-    setUsername('admin');
-    setPassword('admin123');
-    setError(null);
   };
 
   return (
@@ -163,41 +156,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onOpenSubs
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
-                    Password
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="text-[11px] text-cyan-400 hover:text-cyan-300 font-medium transition-colors cursor-pointer"
-                  >
-                    {showPassword ? 'Hide password' : 'Show password'}
-                  </button>
-                </div>
+                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                  Password
+                </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
                     <Lock className="w-4 h-4" />
                   </div>
                   <input
                     id="password-input"
-                    type={showPassword ? 'text' : 'password'}
+                    type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Enter password"
                     autoComplete="current-password"
                     required
-                    className="w-full pl-10 pr-12 py-3 sm:py-2.5 bg-slate-950/80 border border-slate-700/80 rounded-xl text-sm sm:text-base lg:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all font-medium font-mono"
+                    className="w-full pl-10 pr-4 py-3 sm:py-2.5 bg-slate-950/80 border border-slate-700/80 rounded-xl text-sm sm:text-base lg:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all font-medium font-mono"
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-200 transition-colors cursor-pointer min-w-[44px] justify-end"
-                    tabIndex={-1}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4 text-slate-400" />}
-                  </button>
                 </div>
               </div>
 
@@ -221,28 +196,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onOpenSubs
               </button>
             </form>
 
-            {/* Default Credentials Helper Pill */}
-            <div className="mt-6 pt-5 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
-              <div className="text-[11px] text-slate-400">
-                <span className="text-slate-500">Default: </span>
-                <code className="text-cyan-400 font-mono font-bold bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">admin</code>
-                <span className="mx-1 text-slate-600">/</span>
-                <code className="text-cyan-400 font-mono font-bold bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">admin123</code>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleUseDefaultCredentials}
-                className="text-[11px] font-semibold text-cyan-400 hover:text-cyan-300 hover:underline cursor-pointer transition-colors inline-flex items-center gap-1"
-              >
-                <Check className="w-3 h-3" />
-                <span>Fill defaults</span>
-              </button>
-            </div>
-
             {/* Return to Subscriber Portal (Main Page) */}
             {onOpenSubscriberPortal && (
-              <div className="mt-4 pt-4 border-t border-slate-800/50 text-center">
+              <div className="mt-6 pt-5 border-t border-slate-800/80 text-center">
                 <button
                   type="button"
                   onClick={onOpenSubscriberPortal}

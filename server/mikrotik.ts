@@ -11,11 +11,39 @@ export interface MikroTikConfigRecord {
   syncTime?: string;
 }
 
+export function parseRouterHost(rawHost: string, currentPort: number = 443, currentUseSsl: number = 1): { host: string; port: number; useSsl: number } {
+  if (!rawHost) return { host: '172.16.0.1', port: 443, useSsl: 1 };
+  let host = rawHost.trim();
+  let port = currentPort || 443;
+  let useSsl = currentUseSsl;
+
+  if (host.startsWith('https://')) {
+    useSsl = 1;
+    host = host.replace(/^https:\/\//, '');
+  } else if (host.startsWith('http://')) {
+    useSsl = 0;
+    host = host.replace(/^http:\/\//, '');
+  }
+
+  host = host.split('/')[0].trim();
+
+  if (host.includes(':')) {
+    const [h, p] = host.split(':');
+    host = h;
+    const parsedPort = parseInt(p, 10);
+    if (!isNaN(parsedPort) && parsedPort > 0) {
+      port = parsedPort;
+    }
+  }
+
+  return { host: host || '172.16.0.1', port, useSsl };
+}
+
 export function initMikrotikDb(db: SqliteWrapper) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS mikrotik_config (
       id INTEGER PRIMARY KEY CHECK (id = 1),
-      host TEXT NOT NULL DEFAULT '192.168.88.1',
+      host TEXT NOT NULL DEFAULT '172.16.0.1',
       port INTEGER NOT NULL DEFAULT 443,
       useSsl INTEGER NOT NULL DEFAULT 1,
       username TEXT NOT NULL DEFAULT 'admin',
@@ -32,12 +60,15 @@ export function initMikrotikDb(db: SqliteWrapper) {
     // Column might already exist
   }
 
-  const existing = db.get('SELECT * FROM mikrotik_config WHERE id = 1');
+  const existing = db.get<MikroTikConfigRecord>('SELECT * FROM mikrotik_config WHERE id = 1');
   if (!existing) {
     db.run(`
       INSERT INTO mikrotik_config (id, host, port, useSsl, username, password, autoSyncOverdue, syncMethod, syncTime)
-      VALUES (1, '192.168.88.1', 443, 1, 'admin', '', 1, 'ppp_secret', '15m')
+      VALUES (1, '172.16.0.1', 443, 1, 'admin', '', 1, 'ppp_secret', '15m')
     `);
+  } else if (existing.host === '192.168.88.1') {
+    // Migrate legacy default host to 172.16.0.1:443 (HTTPS)
+    db.run(`UPDATE mikrotik_config SET host = '172.16.0.1', port = 443, useSsl = 1 WHERE id = 1 AND host = '192.168.88.1';`);
   }
 }
 
@@ -46,7 +77,7 @@ export function getMikrotikConfig(db: SqliteWrapper): MikroTikConfigRecord {
   const cfg = db.get<MikroTikConfigRecord>('SELECT * FROM mikrotik_config WHERE id = 1');
   if (!cfg) {
     return {
-      host: '192.168.88.1',
+      host: '172.16.0.1',
       port: 443,
       useSsl: 1,
       username: 'admin',
@@ -65,7 +96,14 @@ export function getMikrotikConfig(db: SqliteWrapper): MikroTikConfigRecord {
 export function saveMikrotikConfig(db: SqliteWrapper, cfg: Partial<MikroTikConfigRecord>) {
   initMikrotikDb(db);
   const current = getMikrotikConfig(db);
-  const updated = { ...current, ...cfg };
+  const parsed = parseRouterHost(cfg.host || current.host, cfg.port ?? current.port, cfg.useSsl ?? current.useSsl);
+  const updated = { 
+    ...current, 
+    ...cfg,
+    host: parsed.host,
+    port: parsed.port,
+    useSsl: parsed.useSsl,
+  };
 
   db.run(
     `UPDATE mikrotik_config SET

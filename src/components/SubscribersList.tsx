@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Search, Plus, UserCheck, ArrowUpDown, ArrowUp, ArrowDown, Wifi } from 'lucide-react';
+import { Search, Plus, UserCheck, ArrowUpDown, ArrowUp, ArrowDown, Wifi, ShieldAlert, AlertTriangle, CheckCircle2, X, RefreshCw, Ban } from 'lucide-react';
 import { Subscriber, PaymentRecord, SubCalculatedData, MikroTikDhcpLease, MikroTikInterface } from '../types';
 import { calculateSubMetrics, displayName, formatCurrency, CURRENT_MONTH, abbrMonth, TODAY, getUnpaidMonths, getSubscriberBillingStatus, getSubscriberDueDay, getLeasesForSubscriber, getInterfaceForSubscriber, formatBytes } from '../utils/billingUtils';
+import { authFetch } from '../utils/auth';
 
 interface SubscribersListProps {
   subscribers: Subscriber[];
@@ -11,6 +12,7 @@ interface SubscribersListProps {
   onSelectSubscriber: (sub: Subscriber) => void;
   onRecordPaymentForSub: (sub: Subscriber) => void;
   onAddSubscriber: () => void;
+  onRefreshData?: () => Promise<void> | void;
 }
 
 export const SubscribersList: React.FC<SubscribersListProps> = ({
@@ -21,12 +23,22 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   onSelectSubscriber,
   onRecordPaymentForSub,
   onAddSubscriber,
+  onRefreshData,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'active' | 'due' | 'overdue' | 'inactive' | 'all'>('all');
   const [paymentFilter, setPaymentFilter] = useState<'all' | 'paid' | 'unpaid'>('all');
   const [sortField, setSortField] = useState<'dueDay' | 'id' | 'name' | 'rate'>('dueDay');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // Disable Overdue VLANs State
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [isDisablingOverdue, setIsDisablingOverdue] = useState(false);
+  const [actionNotification, setActionNotification] = useState<{
+    type: 'success' | 'error' | 'info';
+    message: string;
+    details?: Array<{ subId: number; name: string; vlan: number | null; reason: string }>;
+  } | null>(null);
 
   const handleSort = (field: 'dueDay' | 'id' | 'name' | 'rate') => {
     if (sortField === field) {
@@ -47,6 +59,47 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   const dueSubsCount = subscribers.filter((s) => getSubscriberBillingStatus(s, payments) === 'due').length;
   const overdueSubsCount = subscribers.filter((s) => getSubscriberBillingStatus(s, payments) === 'overdue').length;
   const inactiveSubsCount = subscribers.filter((s) => getSubscriberBillingStatus(s, payments) === 'inactive').length;
+
+  // Filter subscribers who are overdue / inactive and have an assigned VLAN
+  const overdueVlanSubs = subscribers.filter((sub) => {
+    const status = getSubscriberBillingStatus(sub, payments);
+    return (status === 'overdue' || status === 'inactive') && sub.vlan && sub.vlan > 0;
+  });
+
+  const handleDisableAllOverdueVlans = async () => {
+    setIsDisablingOverdue(true);
+    setActionNotification(null);
+    try {
+      const res = await authFetch('/api/mikrotik/check-overdue', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const count = data.overdueSubscribersCount || 0;
+        setActionNotification({
+          type: 'success',
+          message: count > 0 
+            ? `Successfully disabled VLAN interfaces for ${count} overdue/inactive subscriber${count > 1 ? 's' : ''} on MikroTik RouterOS.`
+            : 'No overdue subscribers with active VLAN interfaces needed disabling.',
+          details: data.processed || [],
+        });
+        if (onRefreshData) {
+          await onRefreshData();
+        }
+        setIsConfirmModalOpen(false);
+      } else {
+        setActionNotification({
+          type: 'error',
+          message: data.error || 'Failed to disable overdue VLANs on MikroTik RouterOS.',
+        });
+      }
+    } catch (err: any) {
+      setActionNotification({
+        type: 'error',
+        message: err.message || 'Error communicating with MikroTik RouterOS backend.',
+      });
+    } finally {
+      setIsDisablingOverdue(false);
+    }
+  };
 
   // Filter subscribers
   const filteredSubs = subscribers.filter((sub) => {
@@ -135,7 +188,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
           )}
         </div>
 
-        {/* Dropdown Filters */}
+        {/* Dropdown Filters & Actions */}
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1.5 text-xs text-slate-600">
             <span className="font-medium text-slate-500">Status:</span>
@@ -164,8 +217,64 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
               <option value="unpaid">Unpaid Only</option>
             </select>
           </div>
+
+          {/* Disable All Overdue VLANs Button */}
+          <button
+            type="button"
+            onClick={() => setIsConfirmModalOpen(true)}
+            disabled={isDisablingOverdue}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200/90 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            title="Disable all overdue subscriber VLAN interfaces in MikroTik RouterOS"
+          >
+            <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+            <span>Disable Overdue VLANs</span>
+            {overdueVlanSubs.length > 0 && (
+              <span className="ml-0.5 px-1.5 py-0.2 bg-rose-600 text-white text-[10px] font-bold rounded-full">
+                {overdueVlanSubs.length}
+              </span>
+            )}
+          </button>
         </div>
       </div>
+
+      {/* Action Notification Banner */}
+      {actionNotification && (
+        <div
+          className={`p-3.5 rounded-xl border flex items-start justify-between gap-3 text-xs shadow-xs animate-in fade-in slide-in-from-top-2 duration-200 ${
+            actionNotification.type === 'success'
+              ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
+              : actionNotification.type === 'error'
+              ? 'bg-rose-50 text-rose-900 border-rose-200'
+              : 'bg-cyan-50 text-cyan-900 border-cyan-200'
+          }`}
+        >
+          <div className="flex items-start gap-2.5">
+            {actionNotification.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />}
+            {actionNotification.type === 'error' && <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />}
+            {actionNotification.type === 'info' && <ShieldAlert className="w-4 h-4 text-cyan-600 shrink-0 mt-0.5" />}
+            <div>
+              <p className="font-semibold">{actionNotification.message}</p>
+              {actionNotification.details && actionNotification.details.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {actionNotification.details.map((d, idx) => (
+                    <span key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-white/80 rounded border border-emerald-300/60 font-mono text-[10px] text-emerald-800">
+                      <span>{d.name}</span>
+                      {d.vlan && <span className="font-bold">(VLAN {d.vlan})</span>}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActionNotification(null)}
+            className="text-slate-400 hover:text-slate-600 p-1 rounded transition-colors cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Main Table Card */}
       <div className="bg-white border border-slate-200/90 rounded-xl shadow-xs overflow-hidden">
@@ -363,6 +472,125 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal for Disabling Overdue Subscriber VLANs */}
+      {isConfirmModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden flex flex-col max-h-[90vh]">
+            
+            {/* Modal Header */}
+            <div className="p-5 bg-rose-50/80 border-b border-rose-100 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-rose-500 text-white rounded-xl shadow-xs shrink-0">
+                  <Ban className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 leading-tight">
+                    Disable All Overdue VLANs
+                  </h3>
+                  <p className="text-xs text-rose-700 mt-0.5">
+                    RouterOS Automated VLAN Isolation
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isDisablingOverdue && setIsConfirmModalOpen(false)}
+                disabled={isDisablingOverdue}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-white/60 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200/80 text-amber-900 flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Confirm RouterOS Action</p>
+                  <p className="text-amber-800 text-[11px] mt-0.5">
+                    This action will connect to the MikroTik router and automatically disable the VLAN interface for all subscribers who have overdue unpaid balances or inactive statuses.
+                  </p>
+                </div>
+              </div>
+
+              {/* Overdue Subscriber Preview List */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-slate-600 font-semibold text-xs px-1">
+                  <span>Target Overdue Subscribers ({overdueVlanSubs.length})</span>
+                  <span className="text-[11px] text-slate-400 font-normal">Assigned VLANs</span>
+                </div>
+
+                {overdueVlanSubs.length === 0 ? (
+                  <div className="p-6 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-500">
+                    <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-1.5" />
+                    <p className="font-semibold text-xs text-slate-700">No Overdue VLAN Subscribers</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      All subscribers with assigned VLANs are currently up to date or already settled.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-52 overflow-y-auto bg-slate-50/40">
+                    {overdueVlanSubs.map((sub) => {
+                      const m = subMetricsMap[sub.id];
+                      return (
+                        <div key={sub.id} className="p-2.5 flex items-center justify-between gap-3 text-xs hover:bg-white transition-colors">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-[10px] font-bold text-slate-400">#{sub.id}</span>
+                            <span className="font-bold text-slate-800">{displayName(sub)}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {m && m.missed > 0 && (
+                              <span className="text-[10px] text-rose-600 font-semibold">
+                                {m.missed} mo. late
+                              </span>
+                            )}
+                            <span className="px-2 py-0.5 bg-cyan-100 text-cyan-800 font-mono font-bold text-[10px] rounded border border-cyan-200">
+                              VLAN {sub.vlan}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setIsConfirmModalOpen(false)}
+                disabled={isDisablingOverdue}
+                className="px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200/80 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDisableAllOverdueVlans}
+                disabled={isDisablingOverdue}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDisablingOverdue ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Disabling VLANs on RouterOS...</span>
+                  </>
+                ) : (
+                  <>
+                    <Ban className="w-3.5 h-3.5" />
+                    <span>Confirm & Disable All ({overdueVlanSubs.length})</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 };

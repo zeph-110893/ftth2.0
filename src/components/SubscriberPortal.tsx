@@ -44,6 +44,17 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+  const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
+  const [rateLimitNotice, setRateLimitNotice] = useState<string | null>(null);
+
+  // Cooldown timer effect
+  useEffect(() => {
+    if (cooldownRemaining <= 0) return;
+    const timer = setTimeout(() => {
+      setCooldownRemaining((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [cooldownRemaining]);
 
   // Fetch available real subscribers for the dropdown selector
   const fetchSubscribersList = useCallback(async () => {
@@ -83,6 +94,14 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
         },
       });
 
+      if (res.status === 429) {
+        const rateLimitJson = await res.json().catch(() => null);
+        const retrySecs = rateLimitJson?.retryAfter || 10;
+        setRateLimitNotice(`Rate limit active: request quota reached to prevent spam. Please wait ${retrySecs}s.`);
+        setCooldownRemaining(retrySecs);
+        return;
+      }
+
       if (!res.ok) {
         throw new Error(`Server returned status ${res.status}`);
       }
@@ -90,36 +109,49 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
       const json = await res.json();
       if (json && json.success) {
         setData(json);
+        setRateLimitNotice(null);
         if (json.detectedVlan && selectedVlan === null) {
           setSelectedVlan(json.detectedVlan);
         }
         setLastRefreshed(new Date());
       } else {
-        setData(null);
+        if (!data) {
+          setData(null);
+        }
         setError(json?.error || 'No subscriber data found.');
       }
     } catch (err: any) {
       console.warn('Portal data fetch notice:', err?.message || err);
-      setData(null);
+      if (!data) {
+        setData(null);
+      }
       setError(err?.message || 'Unable to connect to server');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [selectedVlan]);
+  }, [selectedVlan, data]);
 
   useEffect(() => {
     fetchPortalData();
   }, [fetchPortalData]);
 
-  // Auto-refresh bandwidth telemetry every 15 seconds if subscriber is present
+  // Auto-refresh bandwidth telemetry every 15 seconds ONLY when page is active/visible
   useEffect(() => {
     if (!data?.subscriber) return;
     const timer = setInterval(() => {
-      fetchPortalData(selectedVlan, true);
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        fetchPortalData(selectedVlan, true);
+      }
     }, 15000);
     return () => clearInterval(timer);
   }, [data?.subscriber, selectedVlan, fetchPortalData]);
+
+  const handleManualRefresh = () => {
+    if (cooldownRemaining > 0 || isRefreshing) return;
+    setCooldownRemaining(3); // 3-second anti-spam client cooldown
+    fetchPortalData(selectedVlan, true);
+  };
 
   // Helper to pick device icon based on device name
   const getDeviceIcon = (deviceName: string) => {
@@ -214,14 +246,23 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
               </div>
             )}
 
-            {/* Refresh Button */}
+            {/* Refresh Button with Anti-Spam Cooldown */}
             <button
-              onClick={() => fetchPortalData(selectedVlan, true)}
-              disabled={isRefreshing}
-              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors cursor-pointer border border-slate-700"
-              title="Refresh Live Data"
+              onClick={handleManualRefresh}
+              disabled={isRefreshing || cooldownRemaining > 0}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer border ${
+                cooldownRemaining > 0
+                  ? 'bg-slate-800/60 text-slate-500 border-slate-700/50 cursor-not-allowed'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-slate-700'
+              }`}
+              title={cooldownRemaining > 0 ? `Rate protection: Wait ${cooldownRemaining}s` : 'Refresh Live Telemetry'}
             >
-              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-cyan-400' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-cyan-400' : ''}`} />
+              {cooldownRemaining > 0 ? (
+                <span className="font-mono text-[11px] text-slate-400">{cooldownRemaining}s</span>
+              ) : (
+                <span className="hidden sm:inline text-[11px]">Refresh</span>
+              )}
             </button>
 
             {/* Admin Login Link */}
@@ -240,6 +281,16 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        {/* Anti-Spam Rate Limit Warning Banner */}
+        {rateLimitNotice && (
+          <div className="flex items-center gap-2.5 p-3.5 bg-amber-500/10 border border-amber-500/30 text-amber-800 rounded-xl text-xs font-medium shadow-sm">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <div className="flex-1">
+              <span className="font-bold">Rate Limit Protection:</span> {rateLimitNotice}
+            </div>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="flex flex-col items-center justify-center py-28 text-slate-500 gap-3">
             <div className="w-10 h-10 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin" />

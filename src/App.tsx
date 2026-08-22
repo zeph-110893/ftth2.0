@@ -10,6 +10,8 @@ import { RevenueAnalytics } from './components/RevenueAnalytics';
 import { ExpensesTracker } from './components/ExpensesTracker';
 import { OverdueTracker } from './components/OverdueTracker';
 import { MikroTikManager } from './components/MikroTikManager';
+import { ActivityView } from './components/ActivityView';
+import { UserManagementModal } from './components/UserManagementModal';
 import { LoginPage } from './components/LoginPage';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { DatabaseModal } from './components/DatabaseModal';
@@ -42,6 +44,7 @@ export default function App() {
   const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState<boolean>(false);
   const [isDatabaseModalOpen, setIsDatabaseModalOpen] = useState<boolean>(false);
+  const [isUserManagementOpen, setIsUserManagementOpen] = useState<boolean>(false);
 
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
@@ -414,6 +417,7 @@ export default function App() {
         }}
         onOpenDatabaseModal={() => setIsDatabaseModalOpen(true)}
         onOpenSubscriberPortal={navigateToSubscriberPortal}
+        onOpenUserManagement={() => setIsUserManagementOpen(true)}
         onRefresh={() => fetchData(true)}
         isSyncing={isSyncing}
         currentUser={currentUser}
@@ -461,6 +465,7 @@ export default function App() {
                   setEditingSub(null);
                   setIsAddSubOpen(true);
                 }}
+                onRefreshData={fetchData}
               />
             )}
 
@@ -505,6 +510,13 @@ export default function App() {
                 subscribers={subscribers}
                 payments={payments}
                 onRefreshData={fetchData}
+              />
+            )}
+
+            {currentTab === 'activity' && (
+              <ActivityView
+                currentUser={currentUser}
+                onRefreshStats={fetchData}
               />
             )}
           </>
@@ -558,6 +570,13 @@ export default function App() {
           setEditingExpense(null);
         }}
         onSaveExpense={handleSaveExpense}
+      />
+
+      {/* User Management & Permissions Modal (Admin only) */}
+      <UserManagementModal
+        isOpen={isUserManagementOpen}
+        onClose={() => setIsUserManagementOpen(false)}
+        currentUser={currentUser}
       />
 
       {/* Security / Change Password Modal */}

@@ -39,6 +39,26 @@ export function clearAuthSession(): void {
   }
 }
 
+export function getUserPermission(user?: AuthUser | null): 'ADMIN' | 'RW' | 'R' {
+  if (!user) return 'R';
+  if (user.permission === 'ADMIN' || user.permission === 'RW' || user.permission === 'R') {
+    return user.permission;
+  }
+  if (user.role === 'admin') return 'ADMIN';
+  if (user.role === 'r' || user.role === 'viewer') return 'R';
+  return 'RW';
+}
+
+export function canWrite(user?: AuthUser | null): boolean {
+  const perm = getUserPermission(user);
+  return perm === 'ADMIN' || perm === 'RW';
+}
+
+export function isAdmin(user?: AuthUser | null): boolean {
+  const perm = getUserPermission(user);
+  return perm === 'ADMIN';
+}
+
 export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const token = getAuthToken();
   const headers = new Headers(init.headers || {});

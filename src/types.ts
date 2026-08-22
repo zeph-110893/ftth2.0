@@ -129,10 +129,36 @@ export interface AuthUser {
   id: number;
   username: string;
   name: string;
-  role: string;
+  role: string; // 'admin' | 'rw' | 'r'
+  permission?: 'ADMIN' | 'RW' | 'R';
 }
 
-export type ViewTab = 'subscribers' | 'analytics' | 'expenses' | 'overdue' | 'mikrotik';
+export interface UserAccount {
+  id: number;
+  username: string;
+  name: string;
+  role: string; // 'admin' | 'rw' | 'r'
+  permission: 'ADMIN' | 'RW' | 'R';
+  createdAt: string;
+  lastLogin?: string | null;
+}
+
+export type AuditActionCategory = 'subscriber' | 'payment' | 'expense' | 'database' | 'user' | 'mikrotik' | 'security' | 'system';
+
+export interface AuditLog {
+  id: string;
+  timestamp: string; // ISO string
+  userId?: number | null;
+  username: string;
+  userRole: string;
+  action: string;
+  category: AuditActionCategory;
+  description: string;
+  details?: string | null;
+  ipAddress?: string | null;
+}
+
+export type ViewTab = 'subscribers' | 'analytics' | 'expenses' | 'overdue' | 'mikrotik' | 'activity';
 
 export interface SubscriberPortalDevice {
   id: string;

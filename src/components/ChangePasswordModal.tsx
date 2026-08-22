@@ -20,7 +20,6 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [username, setUsername] = useState(currentUser?.username || 'admin');
-  const [name, setName] = useState(currentUser?.name || 'Administrator');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +57,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
           currentPassword,
           newPassword: newPassword || undefined,
           newUsername: username.trim(),
-          newName: name.trim(),
+          newName: username.trim(),
         }),
       });
 
@@ -122,21 +121,6 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
               <span>{success}</span>
             </div>
           )}
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Display Name
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Administrator"
-                className="w-full px-3.5 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-              />
-            </div>
-          </div>
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">

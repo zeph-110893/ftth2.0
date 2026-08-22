@@ -40,7 +40,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
   const [activeTab, setActiveTab] = useState<'interfaces' | 'resources' | 'dhcp' | 'settings'>('interfaces');
   
   const [config, setConfig] = useState<MikroTikConfig>({
-    host: '192.168.88.1',
+    host: '172.16.0.1',
     port: 443,
     useSsl: true,
     username: 'admin',
@@ -833,7 +833,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                 required
                 value={config.host}
                 onChange={(e) => setConfig({ ...config, host: e.target.value })}
-                placeholder="192.168.88.1 or router.domain.com"
+                placeholder="172.16.0.1 or https://172.16.0.1:443"
                 className="w-full text-xs p-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
               />
             </div>
