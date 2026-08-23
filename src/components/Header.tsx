@@ -180,21 +180,18 @@ export const Header: React.FC<HeaderProps> = ({
               )}
 
               {/* Primary Action: Add Subscriber */}
-              <button
-                type="button"
-                onClick={onAddSubscriber}
-                disabled={isReadOnly}
-                title={isReadOnly ? 'Read-only permission (R) active. Write actions disabled.' : 'Add a new subscriber'}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 sm:py-2 text-xs font-bold rounded-xl transition-all shadow-xs border ${
-                  isReadOnly
-                    ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed opacity-60'
-                    : 'bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white border-cyan-500 cursor-pointer hover:shadow-cyan-900/30'
-                }`}
-              >
-                <Plus className="w-3.5 h-3.5 shrink-0" />
-                <span className="hidden sm:inline">Add Subscriber</span>
-                <span className="sm:hidden">Add</span>
-              </button>
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={onAddSubscriber}
+                  title="Add a new subscriber"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 sm:py-2 text-xs font-bold rounded-xl transition-all shadow-xs border bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white border-cyan-500 cursor-pointer hover:shadow-cyan-900/30"
+                >
+                  <Plus className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline">Add Subscriber</span>
+                  <span className="sm:hidden">Add</span>
+                </button>
+              )}
 
               {/* Tools / More Menu */}
               <div className="relative" ref={toolsMenuRef}>
