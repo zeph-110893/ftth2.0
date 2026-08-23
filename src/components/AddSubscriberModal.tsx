@@ -40,8 +40,6 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
   onSaveSubscriber,
   nextId,
 }) => {
-  if (!isOpen) return null;
-
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [rate, setRate] = useState<number>(600);
@@ -52,6 +50,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
   const [macAddress, setMacAddress] = useState('');
 
   useEffect(() => {
+    if (!isOpen) return;
     if (editingSubscriber) {
       setFirstName(editingSubscriber.first);
       setLastName(editingSubscriber.last);
@@ -71,7 +70,9 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
       setAddress('');
       setMacAddress('');
     }
-  }, [editingSubscriber]);
+  }, [editingSubscriber, isOpen]);
+
+  if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

@@ -26,17 +26,19 @@ import {
   User,
   Tag,
 } from 'lucide-react';
-import { Subscriber, PaymentRecord, MikroTikConfig, MikroTikResource, MikroTikInterface, MikroTikDhcpLease } from '../types';
+import { Subscriber, PaymentRecord, MikroTikConfig, MikroTikResource, MikroTikInterface, MikroTikDhcpLease, AuthUser } from '../types';
 import { getSubscriberBillingStatus, displayName } from '../utils/billingUtils';
-import { authFetch } from '../utils/auth';
+import { authFetch, canWrite } from '../utils/auth';
 
 interface MikroTikManagerProps {
   subscribers: Subscriber[];
   payments: PaymentRecord[];
+  currentUser?: AuthUser | null;
   onRefreshData?: () => void | Promise<void>;
 }
 
-export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, payments, onRefreshData }) => {
+export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, payments, currentUser, onRefreshData }) => {
+  const isReadOnly = !canWrite(currentUser);
   const [activeTab, setActiveTab] = useState<'interfaces' | 'resources' | 'dhcp' | 'settings'>('interfaces');
   
   const [config, setConfig] = useState<MikroTikConfig>({
@@ -452,15 +454,17 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
-              <button
-                onClick={handleSyncAllComments}
-                disabled={syncingComments}
-                title="Sync subscriber full names directly to MikroTik VLAN interface comments"
-                className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-              >
-                <Tag className={`w-3.5 h-3.5 text-indigo-600 ${syncingComments ? 'animate-spin' : ''}`} />
-                <span>{syncingComments ? 'Syncing Comments...' : 'Sync Names to MikroTik Comments'}</span>
-              </button>
+              {!isReadOnly && (
+                <button
+                  onClick={handleSyncAllComments}
+                  disabled={syncingComments}
+                  title="Sync subscriber full names directly to MikroTik VLAN interface comments"
+                  className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <Tag className={`w-3.5 h-3.5 text-indigo-600 ${syncingComments ? 'animate-spin' : ''}`} />
+                  <span>{syncingComments ? 'Syncing Comments...' : 'Sync Names to MikroTik Comments'}</span>
+                </button>
+              )}
               <button
                 onClick={() => fetchTabDetails('interfaces')}
                 className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
@@ -558,13 +562,15 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                                   >
                                     <span>{displayName(s)}</span>
                                     <span className="text-[9px] text-emerald-600 font-mono">(ID #{s.id})</span>
-                                    <button
-                                      onClick={() => handleUnassignSubscriberFromVlan(s)}
-                                      title="Unassign subscriber from VLAN"
-                                      className="ml-0.5 text-emerald-600 hover:text-rose-600 hover:bg-emerald-100 rounded-full p-0.5 cursor-pointer transition-colors"
-                                    >
-                                      <X className="w-2.5 h-2.5" />
-                                    </button>
+                                    {!isReadOnly && (
+                                      <button
+                                        onClick={() => handleUnassignSubscriberFromVlan(s)}
+                                        title="Unassign subscriber from VLAN"
+                                        className="ml-0.5 text-emerald-600 hover:text-rose-600 hover:bg-emerald-100 rounded-full p-0.5 cursor-pointer transition-colors"
+                                      >
+                                        <X className="w-2.5 h-2.5" />
+                                      </button>
+                                    )}
                                   </span>
                                 ))}
                               </div>
@@ -572,7 +578,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                               <span className="text-slate-400 text-[11px] italic">No subscriber assigned</span>
                             )}
 
-                            {effectiveVlan && assignedSubs.length === 0 ? (
+                            {!isReadOnly && effectiveVlan && assignedSubs.length === 0 ? (
                               <div className="relative inline-block text-left pt-0.5">
                                 {assigningVlan === effectiveVlan ? (
                                   <div className="flex items-center gap-1 bg-slate-50 border border-slate-300 rounded p-1 shadow-xs">
@@ -965,8 +971,8 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                   <button
                     type="button"
                     onClick={handleSyncRouterClock}
-                    disabled={syncingTime}
-                    className="w-full text-xs py-2.5 px-3 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-2"
+                    disabled={syncingTime || isReadOnly}
+                    className="w-full text-xs py-2.5 px-3 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${syncingTime ? 'animate-spin' : ''}`} />
                     <span>{syncingTime ? 'Synchronizing Clock...' : 'Sync System Time Now'}</span>
@@ -988,22 +994,27 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
               </div>
               <input
                 type="checkbox"
+                disabled={isReadOnly}
                 checked={config.autoSyncOverdue}
                 onChange={(e) => setConfig({ ...config, autoSyncOverdue: e.target.checked })}
-                className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
+                className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer disabled:cursor-not-allowed"
               />
             </div>
           </div>
 
           <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-all shadow-md cursor-pointer flex items-center gap-2"
-            >
-              <Check className="w-4 h-4" />
-              <span>Save Router Settings</span>
-            </button>
+            {isReadOnly ? (
+              <p className="text-xs text-amber-600 font-semibold">Router configuration is read-only for your account permission (R).</p>
+            ) : (
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-all shadow-md cursor-pointer flex items-center gap-2"
+              >
+                <Check className="w-4 h-4" />
+                <span>Save Router Settings</span>
+              </button>
+            )}
           </div>
         </form>
       )}

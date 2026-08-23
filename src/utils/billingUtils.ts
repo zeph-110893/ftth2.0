@@ -108,18 +108,19 @@ export function calculateSubMetrics(
   const currentKey = mkey(currentMonthStr);
   const lastCompleteKey = currentKey - 1;
 
-  const entries = allPayments.filter(p => p.sub === sub.id);
+  const entries = allPayments.filter(p => Number(p.sub) === Number(sub.id));
+  const paidKeys = new Set(entries.map(p => mkey(p.month)).filter(k => k > 0));
   const monthsPaid = Array.from(new Set(entries.map(p => p.month))).sort((a, b) => mkey(a) - mkey(b));
 
   const rate = sub.rate || 600;
   const dueDay = sub.dueDay ?? null;
   const accountStatus = sub.status || 'Active';
 
-  const paidCurrent = monthsPaid.includes(currentMonthStr);
+  const paidCurrent = paidKeys.has(currentKey);
 
   let gap = 0;
-  if (monthsPaid.length > 0) {
-    const lastMonthKey = mkey(monthsPaid[monthsPaid.length - 1]);
+  if (paidKeys.size > 0) {
+    const lastMonthKey = Math.max(...Array.from(paidKeys));
     gap = currentKey - lastMonthKey;
   } else {
     gap = 99; // no payments recorded yet
@@ -130,7 +131,7 @@ export function calculateSubMetrics(
 
   const statusPill = getSubscriberBillingStatus(sub, allPayments);
 
-  const totalPaid = entries.reduce((acc, curr) => acc + curr.amount, 0);
+  const totalPaid = entries.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
 
   return {
     id: sub.id,
@@ -150,8 +151,12 @@ export function calculateSubMetrics(
 
 export function getUnpaidMonths(sub: Subscriber, allPayments: PaymentRecord[]): string[] {
   if (!sub) return [];
-  const entries = allPayments.filter(p => p.sub === sub.id);
-  const monthsPaid = new Set(entries.map(p => p.month));
+  const entries = allPayments.filter(p => Number(p.sub) === Number(sub.id));
+  const paidKeys = new Set(
+    entries
+      .map(p => mkey(p.month))
+      .filter(k => k > 0)
+  );
 
   const currentKey = CURRENT_KEY;
   let startKey = currentKey;
@@ -167,12 +172,9 @@ export function getUnpaidMonths(sub: Subscriber, allPayments: PaymentRecord[]): 
   }
 
   // If subscriber has recorded payments older than startKey, adjust startKey to include those
-  if (entries.length > 0) {
-    const paidKeys = entries.map(p => mkey(p.month)).filter(k => k > 0);
-    if (paidKeys.length > 0) {
-      const minPaidKey = Math.min(...paidKeys);
-      startKey = Math.min(startKey, minPaidKey);
-    }
+  if (paidKeys.size > 0) {
+    const minPaidKey = Math.min(...Array.from(paidKeys));
+    startKey = Math.min(startKey, minPaidKey);
   }
 
   // Determine max key that is due as of TODAY
@@ -186,11 +188,10 @@ export function getUnpaidMonths(sub: Subscriber, allPayments: PaymentRecord[]): 
 
   const unpaid: string[] = [];
   for (let k = maxDueKey; k >= startKey; k--) {
-    const year = Math.floor(k / 12);
-    const monthIdx = k % 12;
-    const monthStr = `${MONTH_NAMES[monthIdx]} ${year}`;
-    if (!monthsPaid.has(monthStr)) {
-      unpaid.push(monthStr);
+    if (!paidKeys.has(k)) {
+      const year = Math.floor(k / 12);
+      const monthIdx = k % 12;
+      unpaid.push(`${MONTH_NAMES[monthIdx]} ${year}`);
     }
   }
 

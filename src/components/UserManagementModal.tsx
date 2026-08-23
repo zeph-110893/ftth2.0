@@ -16,7 +16,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { UserAccount, AuthUser } from '../types';
-import { authFetch } from '../utils/auth';
+import { authFetch, canWrite, isAdmin } from '../utils/auth';
 
 interface UserManagementModalProps {
   isOpen: boolean;
@@ -29,6 +29,9 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   onClose,
   currentUser,
 }) => {
+  const isReadOnly = !canWrite(currentUser);
+  const isUserAdmin = isAdmin(currentUser);
+
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +84,11 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     setError(null);
     setSuccessMsg(null);
 
+    if (isReadOnly || !isUserAdmin) {
+      setError('Permission denied. Read-only accounts cannot create new user accounts.');
+      return;
+    }
+
     if (!username.trim() || !password.trim()) {
       setError('Username and password are required.');
       return;
@@ -125,6 +133,11 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     setError(null);
     setSuccessMsg(null);
 
+    if (isReadOnly || !isUserAdmin) {
+      setError('Permission denied. Read-only accounts cannot modify user accounts.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const payload: any = {
@@ -160,6 +173,11 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   };
 
   const handleDeleteUser = async (user: UserAccount) => {
+    if (isReadOnly || !isUserAdmin) {
+      setError('Permission denied. Read-only accounts cannot delete users.');
+      return;
+    }
+
     if (!confirm(`Are you sure you want to permanently delete user account "${user.username}"?`)) {
       return;
     }
@@ -184,6 +202,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   };
 
   const startEdit = (user: UserAccount) => {
+    if (isReadOnly || !isUserAdmin) return;
     setEditingUser(user);
     setEditPassword('');
     const userPerm = user.permission || (user.role === 'admin' ? 'ADMIN' : user.role === 'r' ? 'R' : 'RW');
@@ -413,19 +432,26 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
           ) : (
             <div className="flex justify-between items-center">
               <span className="text-xs font-semibold text-slate-300">Registered Accounts ({users.length})</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsCreating(true);
-                  setEditingUser(null);
-                  setError(null);
-                  setSuccessMsg(null);
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl cursor-pointer shadow-xs"
-              >
-                <UserPlus className="w-3.5 h-3.5" />
-                <span>Add New User</span>
-              </button>
+              {!isReadOnly && isUserAdmin ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCreating(true);
+                    setEditingUser(null);
+                    setError(null);
+                    setSuccessMsg(null);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl cursor-pointer shadow-xs"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Add New User</span>
+                </button>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[11px] text-amber-400 bg-amber-950/40 border border-amber-800/40 px-2 py-0.5 rounded-lg">
+                  <Lock className="w-3 h-3 text-amber-400" />
+                  <span>Read-Only: Add user disabled</span>
+                </span>
+              )}
             </div>
           )}
 
@@ -495,27 +521,31 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                         </td>
 
                         <td className="py-2.5 px-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => startEdit(u)}
-                              title="Edit user details or permissions"
-                              className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-
-                            {!isSelf && (
+                          {!isReadOnly && isUserAdmin ? (
+                            <div className="flex items-center justify-end gap-1.5">
                               <button
                                 type="button"
-                                onClick={() => handleDeleteUser(u)}
-                                title="Delete user account"
-                                className="p-1 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 hover:text-rose-300 transition-colors cursor-pointer border border-rose-900/40"
+                                onClick={() => startEdit(u)}
+                                title="Edit user details or permissions"
+                                className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                <Edit2 className="w-3.5 h-3.5" />
                               </button>
-                            )}
-                          </div>
+
+                              {!isSelf && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteUser(u)}
+                                  title="Delete user account"
+                                  className="p-1 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 hover:text-rose-300 transition-colors cursor-pointer border border-rose-900/40"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-slate-500 font-mono">Read-Only</span>
+                          )}
                         </td>
                       </tr>
                     );

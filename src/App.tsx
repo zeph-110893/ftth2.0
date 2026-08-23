@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Subscriber, PaymentRecord, Expense, ViewTab, MikroTikDhcpLease, MikroTikInterface, AuthUser } from './types';
 import { calculateSubMetrics, exportToCSV, CURRENT_MONTH } from './utils/billingUtils';
-import { getStoredUser, getAuthToken, clearAuthSession, authFetch } from './utils/auth';
+import { getStoredUser, getAuthToken, clearAuthSession, authFetch, canWrite } from './utils/auth';
 
 import { Header } from './components/Header';
 import { NavigationTabs } from './components/NavigationTabs';
@@ -17,7 +17,6 @@ import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { DatabaseModal } from './components/DatabaseModal';
 
 import { SubscriberDetailModal } from './components/SubscriberDetailModal';
-import { RecordPaymentModal } from './components/RecordPaymentModal';
 import { AddSubscriberModal } from './components/AddSubscriberModal';
 import { AddExpenseModal } from './components/AddExpenseModal';
 import { SubscriberPortal } from './components/SubscriberPortal';
@@ -60,6 +59,10 @@ export default function App() {
     const handlePopState = () => {
       const path = window.location.pathname.toLowerCase();
       const search = window.location.search.toLowerCase();
+      if (getAuthToken() || currentUser) {
+        setIsAdminView(true);
+        return;
+      }
       setIsAdminView(
         path.startsWith('/admin') ||
         path.startsWith('/login') ||
@@ -70,7 +73,17 @@ export default function App() {
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [currentUser]);
+
+  // Keep authenticated admins restricted strictly to Admin View
+  useEffect(() => {
+    if (currentUser && !isAdminView) {
+      setIsAdminView(true);
+      if (typeof window !== 'undefined' && window.history?.pushState) {
+        window.history.pushState({}, '', '/admin');
+      }
+    }
+  }, [currentUser, isAdminView]);
 
   // Navigation helpers
   const navigateToAdmin = () => {
@@ -81,6 +94,11 @@ export default function App() {
   };
 
   const navigateToSubscriberPortal = () => {
+    // Admins and authenticated staff are not allowed to access the subscriber portal
+    if (currentUser || getAuthToken()) {
+      setIsAdminView(true);
+      return;
+    }
     setIsAdminView(false);
     if (typeof window !== 'undefined' && window.history?.pushState) {
       window.history.pushState({}, '', '/');
@@ -202,10 +220,15 @@ export default function App() {
   // View state
   const [currentTab, setCurrentTab] = useState<ViewTab>('subscribers');
 
+  // Ensure read-only users cannot be on mikrotik tab
+  useEffect(() => {
+    if (!canWrite(currentUser) && currentTab === 'mikrotik') {
+      setCurrentTab('subscribers');
+    }
+  }, [currentUser, currentTab]);
+
   // Modal states
   const [selectedSubDetail, setSelectedSubDetail] = useState<Subscriber | null>(null);
-  const [isRecordPaymentOpen, setIsRecordPaymentOpen] = useState(false);
-  const [preselectedPaymentSub, setPreselectedPaymentSub] = useState<Subscriber | null>(null);
   const [isAddSubOpen, setIsAddSubOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<Subscriber | null>(null);
 
@@ -365,8 +388,8 @@ export default function App() {
     }
   };
 
-  // Default Landing Page: Subscriber Portal (no authentication required)
-  if (!isAdminView) {
+  // Default Landing Page: Subscriber Portal (only for public unauthenticated visitors)
+  if (!isAdminView && !currentUser) {
     return (
       <SubscriberPortal
         onOpenAdminLogin={navigateToAdmin}
@@ -407,16 +430,11 @@ export default function App() {
           setEditingSub(null);
           setIsAddSubOpen(true);
         }}
-        onRecordPayment={() => {
-          setPreselectedPaymentSub(null);
-          setIsRecordPaymentOpen(true);
-        }}
         onAddExpense={() => {
           setEditingExpense(null);
           setIsAddExpenseOpen(true);
         }}
         onOpenDatabaseModal={() => setIsDatabaseModalOpen(true)}
-        onOpenSubscriberPortal={navigateToSubscriberPortal}
         onOpenUserManagement={() => setIsUserManagementOpen(true)}
         onRefresh={() => fetchData(true)}
         isSyncing={isSyncing}
@@ -424,7 +442,7 @@ export default function App() {
         onOpenChangePassword={() => setIsChangePasswordOpen(true)}
         onLogout={async () => {
           await handleLogout();
-          navigateToSubscriberPortal();
+          navigateToAdmin();
         }}
         totalSubsCount={subscribers.length}
         activeCount={activeCount}
@@ -435,7 +453,14 @@ export default function App() {
       {/* Navigation Tabs */}
       <NavigationTabs
         currentTab={currentTab}
-        onTabChange={setCurrentTab}
+        currentUser={currentUser}
+        onTabChange={(tab) => {
+          if (!canWrite(currentUser) && tab === 'mikrotik') {
+            setCurrentTab('subscribers');
+          } else {
+            setCurrentTab(tab);
+          }
+        }}
         overdueCount={overdueCount}
         totalUnpaidAmount={totalUnpaidAmount}
         expenseCount={expenses.length}
@@ -456,11 +481,8 @@ export default function App() {
                 payments={payments}
                 dhcpLeases={dhcpLeases}
                 mikrotikInterfaces={mikrotikInterfaces}
+                currentUser={currentUser}
                 onSelectSubscriber={(sub) => setSelectedSubDetail(sub)}
-                onRecordPaymentForSub={(sub) => {
-                  setPreselectedPaymentSub(sub);
-                  setIsRecordPaymentOpen(true);
-                }}
                 onAddSubscriber={() => {
                   setEditingSub(null);
                   setIsAddSubOpen(true);
@@ -481,6 +503,7 @@ export default function App() {
             {currentTab === 'expenses' && (
               <ExpensesTracker
                 expenses={expenses}
+                currentUser={currentUser}
                 onAddExpense={() => {
                   setEditingExpense(null);
                   setIsAddExpenseOpen(true);
@@ -497,18 +520,16 @@ export default function App() {
               <OverdueTracker
                 subscribers={subscribers}
                 payments={payments}
-                onRecordPaymentForSub={(sub) => {
-                  setPreselectedPaymentSub(sub);
-                  setIsRecordPaymentOpen(true);
-                }}
+                currentUser={currentUser}
                 onSelectSubscriber={(sub) => setSelectedSubDetail(sub)}
               />
             )}
 
-            {currentTab === 'mikrotik' && (
+            {currentTab === 'mikrotik' && canWrite(currentUser) && (
               <MikroTikManager
                 subscribers={subscribers}
                 payments={payments}
+                currentUser={currentUser}
                 onRefreshData={fetchData}
               />
             )}
@@ -528,6 +549,7 @@ export default function App() {
         subscriber={selectedSubDetail}
         payments={payments}
         dhcpLeases={dhcpLeases}
+        currentUser={currentUser}
         onClose={() => setSelectedSubDetail(null)}
         onUpdateSubscriber={handleSaveSubscriber}
         onDeleteSubscriber={handleDeleteSubscriber}
@@ -538,17 +560,6 @@ export default function App() {
           setEditingSub(sub);
           setIsAddSubOpen(true);
         }}
-      />
-
-      <RecordPaymentModal
-        isOpen={isRecordPaymentOpen}
-        subscribers={subscribers}
-        preselectedSub={preselectedPaymentSub}
-        onClose={() => {
-          setIsRecordPaymentOpen(false);
-          setPreselectedPaymentSub(null);
-        }}
-        onSavePayment={handleSavePayment}
       />
 
       <AddSubscriberModal
@@ -594,6 +605,7 @@ export default function App() {
         subscribersCount={subscribers.length}
         paymentsCount={payments.length}
         expensesCount={expenses.length}
+        currentUser={currentUser}
         onDatabaseRestored={({ subscribers: newSubs, payments: newPayments, expenses: newExpenses }) => {
           setSubscribers(newSubs);
           setPayments(newPayments);

@@ -1,16 +1,16 @@
 import React, { useState } from 'react';
 import { Search, Plus, UserCheck, ArrowUpDown, ArrowUp, ArrowDown, Wifi, ShieldAlert, AlertTriangle, CheckCircle2, X, RefreshCw, Ban } from 'lucide-react';
-import { Subscriber, PaymentRecord, SubCalculatedData, MikroTikDhcpLease, MikroTikInterface } from '../types';
+import { Subscriber, PaymentRecord, SubCalculatedData, MikroTikDhcpLease, MikroTikInterface, AuthUser } from '../types';
 import { calculateSubMetrics, displayName, formatCurrency, CURRENT_MONTH, abbrMonth, TODAY, getUnpaidMonths, getSubscriberBillingStatus, getSubscriberDueDay, getLeasesForSubscriber, getInterfaceForSubscriber, formatBytes } from '../utils/billingUtils';
-import { authFetch } from '../utils/auth';
+import { authFetch, canWrite } from '../utils/auth';
 
 interface SubscribersListProps {
   subscribers: Subscriber[];
   payments: PaymentRecord[];
   dhcpLeases?: MikroTikDhcpLease[];
   mikrotikInterfaces?: MikroTikInterface[];
+  currentUser?: AuthUser | null;
   onSelectSubscriber: (sub: Subscriber) => void;
-  onRecordPaymentForSub: (sub: Subscriber) => void;
   onAddSubscriber: () => void;
   onRefreshData?: () => Promise<void> | void;
 }
@@ -20,11 +20,12 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   payments,
   dhcpLeases = [],
   mikrotikInterfaces = [],
+  currentUser,
   onSelectSubscriber,
-  onRecordPaymentForSub,
   onAddSubscriber,
   onRefreshData,
 }) => {
+  const isReadOnly = !canWrite(currentUser);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'active' | 'due' | 'overdue' | 'inactive' | 'all'>('all');
   const [paymentFilter, setPaymentFilter] = useState<'all' | 'paid' | 'unpaid'>('all');
@@ -219,21 +220,23 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
           </div>
 
           {/* Disable All Overdue VLANs Button */}
-          <button
-            type="button"
-            onClick={() => setIsConfirmModalOpen(true)}
-            disabled={isDisablingOverdue}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200/90 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-            title="Disable all overdue subscriber VLAN interfaces in MikroTik RouterOS"
-          >
-            <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-            <span>Disable Overdue VLANs</span>
-            {overdueVlanSubs.length > 0 && (
-              <span className="ml-0.5 px-1.5 py-0.2 bg-rose-600 text-white text-[10px] font-bold rounded-full">
-                {overdueVlanSubs.length}
-              </span>
-            )}
-          </button>
+          {!isReadOnly && (
+            <button
+              type="button"
+              onClick={() => setIsConfirmModalOpen(true)}
+              disabled={isDisablingOverdue}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200/90 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              title="Disable all overdue subscriber VLAN interfaces in MikroTik RouterOS"
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+              <span>Disable Overdue VLANs</span>
+              {overdueVlanSubs.length > 0 && (
+                <span className="ml-0.5 px-1.5 py-0.2 bg-rose-600 text-white text-[10px] font-bold rounded-full">
+                  {overdueVlanSubs.length}
+                </span>
+              )}
+            </button>
+          )}
         </div>
       </div>
 

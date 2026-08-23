@@ -1,32 +1,43 @@
 import React from 'react';
-import { AlertTriangle, Phone, MapPin, Receipt, CheckCircle2, ShieldAlert } from 'lucide-react';
-import { Subscriber, PaymentRecord } from '../types';
-import { calculateSubMetrics, displayName, formatCurrency, CURRENT_MONTH, formatDueDate } from '../utils/billingUtils';
+import { AlertTriangle, Phone, MapPin, CheckCircle2, ShieldAlert, Calendar, ArrowRight } from 'lucide-react';
+import { Subscriber, PaymentRecord, AuthUser } from '../types';
+import { calculateSubMetrics, displayName, formatCurrency, CURRENT_MONTH, formatDueDate, getUnpaidMonths, abbrMonth } from '../utils/billingUtils';
+import { canWrite } from '../utils/auth';
 
 interface OverdueTrackerProps {
   subscribers: Subscriber[];
   payments: PaymentRecord[];
-  onRecordPaymentForSub: (sub: Subscriber) => void;
+  currentUser?: AuthUser | null;
   onSelectSubscriber: (sub: Subscriber) => void;
 }
 
 export const OverdueTracker: React.FC<OverdueTrackerProps> = ({
   subscribers,
   payments,
-  onRecordPaymentForSub,
+  currentUser,
   onSelectSubscriber,
 }) => {
-  // Find overdue or missed payment subscribers
+  const isReadOnly = !canWrite(currentUser);
+  
+  // Find overdue subscribers: Must be active, have at least 1 unpaid due month, and be classified as overdue
   const overdueSubs = subscribers
-    .map((sub) => ({
-      sub,
-      metrics: calculateSubMetrics(sub, payments, CURRENT_MONTH),
-    }))
-    .filter(({ metrics }) => metrics.statusPill === 'overdue')
-    .sort((a, b) => b.metrics.missed - a.metrics.missed);
+    .map((sub) => {
+      const unpaidMonths = getUnpaidMonths(sub, payments);
+      const metrics = calculateSubMetrics(sub, payments, CURRENT_MONTH);
+      return {
+        sub,
+        metrics,
+        unpaidMonths,
+      };
+    })
+    .filter(({ sub, metrics, unpaidMonths }) => {
+      // Avoid subscribers who have paid for the same/current month or have 0 unpaid months
+      return sub.status !== 'Inactive' && unpaidMonths.length > 0 && metrics.statusPill === 'overdue';
+    })
+    .sort((a, b) => b.unpaidMonths.length - a.unpaidMonths.length);
 
   const totalOverdueBalance = overdueSubs.reduce((acc, curr) => {
-    return acc + (curr.metrics.missed * curr.metrics.rate || curr.metrics.rate);
+    return acc + (curr.unpaidMonths.length * curr.metrics.rate);
   }, 0);
 
   return (
@@ -41,7 +52,7 @@ export const OverdueTracker: React.FC<OverdueTrackerProps> = ({
           <div>
             <h2 className="text-base font-bold text-amber-900">Overdue & Outstanding Balance Center</h2>
             <p className="text-xs text-amber-700 mt-0.5">
-              {overdueSubs.length} subscribers require collection attention for unpaid billing cycles.
+              {overdueSubs.length} subscriber{overdueSubs.length === 1 ? '' : 's'} require collection attention for unpaid billing cycles.
             </p>
           </div>
         </div>
@@ -61,9 +72,9 @@ export const OverdueTracker: React.FC<OverdueTrackerProps> = ({
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {overdueSubs.map(({ sub, metrics }) => {
+          {overdueSubs.map(({ sub, metrics, unpaidMonths }) => {
             const nameStr = displayName(sub);
-            const totalDebt = (metrics.missed > 0 ? metrics.missed : 1) * metrics.rate;
+            const totalDebt = unpaidMonths.length * metrics.rate;
 
             return (
               <div
@@ -90,12 +101,30 @@ export const OverdueTracker: React.FC<OverdueTrackerProps> = ({
 
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-800 font-bold text-[10px] uppercase rounded-full border border-amber-200">
                       <AlertTriangle className="w-3 h-3 text-amber-600" />
-                      {metrics.missed > 0 ? `${metrics.missed} mo. late` : 'Overdue'}
+                      {unpaidMonths.length > 0 ? `${unpaidMonths.length} mo. late` : 'Overdue'}
                     </span>
                   </div>
 
+                  {/* Unpaid Months Breakdown */}
+                  <div className="py-2.5 border-b border-slate-100">
+                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+                      <Calendar className="w-3 h-3 text-rose-500" />
+                      <span>Unpaid Billing Cycles ({unpaidMonths.length})</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {unpaidMonths.map((m) => (
+                        <span
+                          key={m}
+                          className="px-2 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-semibold"
+                        >
+                          {abbrMonth(m)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* Contact & Address */}
-                  <div className="py-3 space-y-1 text-xs text-slate-600">
+                  <div className="py-2.5 space-y-1 text-xs text-slate-600">
                     {sub.phone && (
                       <div className="flex items-center gap-2 text-slate-600">
                         <Phone className="w-3.5 h-3.5 text-slate-400" />
@@ -111,22 +140,23 @@ export const OverdueTracker: React.FC<OverdueTrackerProps> = ({
                   </div>
                 </div>
 
-                {/* Bottom Debt & Quick Collect */}
+                {/* Bottom Debt & Quick Settle Action */}
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-between mt-2">
                   <div>
-                    <div className="text-[10px] text-slate-400 uppercase font-semibold">Estimated Debt</div>
+                    <div className="text-[10px] text-slate-400 uppercase font-semibold">Total Outstanding Debt</div>
                     <div className="text-base font-black font-mono text-rose-600">{formatCurrency(totalDebt)}</div>
                   </div>
 
                   <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onRecordPaymentForSub(sub);
+                      onSelectSubscriber(sub);
                     }}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer shadow-2xs"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer shadow-xs"
                   >
-                    <Receipt className="w-3.5 h-3.5" />
-                    <span>Collect Payment</span>
+                    <span>View & Settle</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>

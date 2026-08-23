@@ -23,10 +23,8 @@ import { AuthUser } from '../types';
 
 interface HeaderProps {
   onAddSubscriber: () => void;
-  onRecordPayment: () => void;
   onAddExpense?: () => void;
   onOpenDatabaseModal?: () => void;
-  onOpenSubscriberPortal?: () => void;
   onOpenUserManagement?: () => void;
   onExportCSV?: () => void;
   onResetData?: () => void;
@@ -43,10 +41,8 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   onAddSubscriber,
-  onRecordPayment,
   onAddExpense,
   onOpenDatabaseModal,
-  onOpenSubscriberPortal,
   onOpenUserManagement,
   onRefresh,
   isSyncing = false,
@@ -183,35 +179,19 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               )}
 
-              {/* Primary Action 1: Record Payment (Nordic Cyan) */}
-              <button
-                type="button"
-                onClick={onRecordPayment}
-                disabled={isReadOnly}
-                title={isReadOnly ? 'Read-only permission (R) active. Write actions disabled.' : 'Record a subscriber payment'}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 sm:py-2 text-xs font-bold rounded-xl transition-all shadow-xs ${
-                  isReadOnly
-                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700 opacity-60'
-                    : 'bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white cursor-pointer hover:shadow-cyan-900/30'
-                }`}
-              >
-                <Receipt className="w-3.5 h-3.5 shrink-0" />
-                <span>Record Payment</span>
-              </button>
-
-              {/* Primary Action 2: Add Subscriber (Deep Slate with Cyan border/hover) */}
+              {/* Primary Action: Add Subscriber */}
               <button
                 type="button"
                 onClick={onAddSubscriber}
                 disabled={isReadOnly}
                 title={isReadOnly ? 'Read-only permission (R) active. Write actions disabled.' : 'Add a new subscriber'}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 sm:py-2 text-xs font-bold rounded-xl transition-all shadow-xs border ${
+                className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 sm:py-2 text-xs font-bold rounded-xl transition-all shadow-xs border ${
                   isReadOnly
                     ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed opacity-60'
-                    : 'bg-slate-800 hover:bg-slate-700 active:bg-slate-800 text-cyan-300 hover:text-white border-slate-700 cursor-pointer'
+                    : 'bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white border-cyan-500 cursor-pointer hover:shadow-cyan-900/30'
                 }`}
               >
-                <Plus className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
+                <Plus className="w-3.5 h-3.5 shrink-0" />
                 <span className="hidden sm:inline">Add Subscriber</span>
                 <span className="sm:hidden">Add</span>
               </button>
@@ -249,23 +229,6 @@ export const Header: React.FC<HeaderProps> = ({
                         <div>
                           <div className="font-bold text-white">Users & Permissions</div>
                           <div className="text-[10px] text-slate-400">Add users, set R / RW / Admin</div>
-                        </div>
-                      </button>
-                    )}
-
-                    {onOpenSubscriberPortal && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsMenuOpen(false);
-                          onOpenSubscriberPortal();
-                        }}
-                        className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-cyan-950/60 hover:text-cyan-300 flex items-center gap-2.5 transition-colors cursor-pointer"
-                      >
-                        <Wifi className="w-4 h-4 text-cyan-400 shrink-0" />
-                        <div>
-                          <div className="font-bold text-white">Subscriber Portal</div>
-                          <div className="text-[10px] text-slate-400">Preview live subscriber web page</div>
                         </div>
                       </button>
                     )}

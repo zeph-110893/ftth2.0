@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { Plus, Search, Trash2, Edit3, ReceiptText, Filter, Calendar } from 'lucide-react';
-import { Expense } from '../types';
+import { Expense, AuthUser } from '../types';
 import { MONTH_NAMES, CURRENT_MONTH, formatCurrency } from '../utils/billingUtils';
+import { canWrite } from '../utils/auth';
 
 interface ExpensesTrackerProps {
   expenses: Expense[];
+  currentUser?: AuthUser | null;
   onAddExpense: () => void;
   onEditExpense: (expense: Expense) => void;
   onDeleteExpense: (id: string) => void;
@@ -12,10 +14,12 @@ interface ExpensesTrackerProps {
 
 export const ExpensesTracker: React.FC<ExpensesTrackerProps> = ({
   expenses,
+  currentUser,
   onAddExpense,
   onEditExpense,
   onDeleteExpense,
 }) => {
+  const isReadOnly = !canWrite(currentUser);
   const [search, setSearch] = useState('');
   const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
@@ -146,13 +150,15 @@ export const ExpensesTracker: React.FC<ExpensesTrackerProps> = ({
             </div>
 
             {/* Add Expense Button */}
-            <button
-              onClick={onAddExpense}
-              className="px-3 py-1.5 text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-500 rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Expense</span>
-            </button>
+            {!isReadOnly && (
+              <button
+                onClick={onAddExpense}
+                className="px-3 py-1.5 text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-500 rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-xs"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Expense</span>
+              </button>
+            )}
 
           </div>
 
@@ -194,22 +200,24 @@ export const ExpensesTracker: React.FC<ExpensesTrackerProps> = ({
                     <span className="text-slate-400 font-mono text-[10px]">{exp.date}</span>
                   </div>
 
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => onEditExpense(exp)}
-                      className="p-1 text-slate-500 hover:text-cyan-600 rounded"
-                      title="Edit"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => onDeleteExpense(exp.id)}
-                      className="p-1 text-slate-400 hover:text-rose-600 rounded"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                  {!isReadOnly && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => onEditExpense(exp)}
+                        className="p-1 text-slate-500 hover:text-cyan-600 rounded"
+                        title="Edit"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => onDeleteExpense(exp.id)}
+                        className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))
@@ -228,13 +236,13 @@ export const ExpensesTracker: React.FC<ExpensesTrackerProps> = ({
                 <th className="py-2.5 px-3 text-right">Total</th>
                 <th className="py-2.5 px-3">Month</th>
                 <th className="py-2.5 px-3">Date</th>
-                <th className="py-2.5 px-4 text-center">Actions</th>
+                {!isReadOnly && <th className="py-2.5 px-4 text-center">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
               {filteredExpenses.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">
+                  <td colSpan={isReadOnly ? 7 : 8} className="py-12 text-center text-slate-400">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <ReceiptText className="w-8 h-8 text-slate-300" />
                       <p className="font-medium text-slate-600 text-sm">No expenses recorded</p>
@@ -288,24 +296,26 @@ export const ExpensesTracker: React.FC<ExpensesTrackerProps> = ({
                     </td>
 
                     {/* Actions */}
-                    <td className="py-3 px-4 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          onClick={() => onEditExpense(exp)}
-                          className="p-1 text-slate-500 hover:text-cyan-600 rounded transition-colors"
-                          title="Edit"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => onDeleteExpense(exp.id)}
-                          className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
+                    {!isReadOnly && (
+                      <td className="py-3 px-4 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => onEditExpense(exp)}
+                            className="p-1 text-slate-500 hover:text-cyan-600 rounded transition-colors"
+                            title="Edit"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => onDeleteExpense(exp.id)}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    )}
 
                   </tr>
                 ))
