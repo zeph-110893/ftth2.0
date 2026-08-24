@@ -1,6 +1,7 @@
 import React from 'react';
 import { Users, BarChart3, Receipt, AlertTriangle, Router, Activity } from 'lucide-react';
 import { ViewTab, AuthUser } from '../types';
+import { isAdmin } from '../utils/auth';
 
 interface NavigationTabsProps {
   currentTab: ViewTab;
@@ -13,10 +14,13 @@ interface NavigationTabsProps {
 
 export const NavigationTabs: React.FC<NavigationTabsProps> = ({
   currentTab,
+  currentUser,
   onTabChange,
   overdueCount,
   expenseCount = 0,
 }) => {
+  const isUserAdmin = isAdmin(currentUser);
+
   const allTabs = [
     {
       id: 'subscribers' as ViewTab,
@@ -41,16 +45,20 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
       badge: overdueCount > 0 ? overdueCount : undefined,
       badgeColor: 'bg-rose-100 text-rose-700 border border-rose-200',
     },
-    {
-      id: 'mikrotik' as ViewTab,
-      label: 'MikroTik RouterOS',
-      icon: Router,
-    },
-    {
-      id: 'activity' as ViewTab,
-      label: 'Activity Log',
-      icon: Activity,
-    },
+    ...(isUserAdmin
+      ? [
+          {
+            id: 'mikrotik' as ViewTab,
+            label: 'MikroTik RouterOS',
+            icon: Router,
+          },
+          {
+            id: 'activity' as ViewTab,
+            label: 'Activity Log',
+            icon: Activity,
+          },
+        ]
+      : []),
   ];
 
   return (

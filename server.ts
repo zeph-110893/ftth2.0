@@ -716,12 +716,14 @@ async function startServer() {
     (req as any).user = session;
 
     // Enforce Admin-only endpoints:
-    // Only users with ADMIN permission can access user management, database restores, or database reset.
+    // Only users with ADMIN permission can access user management, database restores, database reset, audit logs, or MikroTik settings.
     if (
       req.path.startsWith('/users') ||
       req.path === '/database/upload' ||
       req.path === '/reset' ||
-      req.path === '/audit-logs/clear'
+      req.path.startsWith('/audit-logs') ||
+      req.path.startsWith('/mikrotik/config') ||
+      req.path.startsWith('/mikrotik/sync-time')
     ) {
       if (session.permission !== 'ADMIN' && session.role !== 'admin') {
         return res.status(403).json({

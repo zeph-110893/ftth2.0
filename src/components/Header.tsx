@@ -213,8 +213,8 @@ export const Header: React.FC<HeaderProps> = ({
                       >
                         <Users className="w-4 h-4 text-purple-400 shrink-0" />
                         <div>
-                          <div className="font-bold text-white">Users & Permissions</div>
-                          <div className="text-[10px] text-slate-400">Add users, set R / RW / Admin</div>
+                          <div className="font-bold text-white">Users & Roles</div>
+                          <div className="text-[10px] text-slate-400">Add users, manage Operator / Admin roles</div>
                         </div>
                       </button>
                     )}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Subscriber, PaymentRecord, Expense, ViewTab, MikroTikDhcpLease, MikroTikInterface, AuthUser } from './types';
 import { calculateSubMetrics, exportToCSV, CURRENT_MONTH } from './utils/billingUtils';
-import { getStoredUser, getAuthToken, clearAuthSession, authFetch, canWrite } from './utils/auth';
+import { getStoredUser, getAuthToken, clearAuthSession, authFetch, canWrite, isAdmin } from './utils/auth';
 
 import { Header } from './components/Header';
 import { NavigationTabs } from './components/NavigationTabs';
@@ -220,9 +220,9 @@ export default function App() {
   // View state
   const [currentTab, setCurrentTab] = useState<ViewTab>('subscribers');
 
-  // Ensure read-only users cannot be on mikrotik tab
+  // Ensure operator users cannot access mikrotik or activity tabs
   useEffect(() => {
-    if (!canWrite(currentUser) && currentTab === 'mikrotik') {
+    if (!isAdmin(currentUser) && (currentTab === 'mikrotik' || currentTab === 'activity')) {
       setCurrentTab('subscribers');
     }
   }, [currentUser, currentTab]);
@@ -455,7 +455,7 @@ export default function App() {
         currentTab={currentTab}
         currentUser={currentUser}
         onTabChange={(tab) => {
-          if (!canWrite(currentUser) && tab === 'mikrotik') {
+          if (!isAdmin(currentUser) && (tab === 'mikrotik' || tab === 'activity')) {
             setCurrentTab('subscribers');
           } else {
             setCurrentTab(tab);
@@ -525,7 +525,7 @@ export default function App() {
               />
             )}
 
-            {currentTab === 'mikrotik' && canWrite(currentUser) && (
+            {currentTab === 'mikrotik' && isAdmin(currentUser) && (
               <MikroTikManager
                 subscribers={subscribers}
                 payments={payments}
@@ -534,7 +534,7 @@ export default function App() {
               />
             )}
 
-            {currentTab === 'activity' && (
+            {currentTab === 'activity' && isAdmin(currentUser) && (
               <ActivityView
                 currentUser={currentUser}
                 onRefreshStats={fetchData}
