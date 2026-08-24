@@ -219,7 +219,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {onOpenDatabaseModal && (
+                    {isAdmin && onOpenDatabaseModal && (
                       <button
                         type="button"
                         onClick={() => {

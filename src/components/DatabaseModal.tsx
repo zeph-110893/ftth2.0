@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Database, Download, Upload, AlertTriangle, CheckCircle2, Loader2, X, HardDrive, FileText, Shield } from 'lucide-react';
-import { authFetch, canWrite } from '../utils/auth';
+import { authFetch, isAdmin } from '../utils/auth';
 import { Subscriber, PaymentRecord, Expense, AuthUser } from '../types';
 
 interface DatabaseModalProps {
@@ -22,14 +22,14 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({
   currentUser,
   onDatabaseRestored,
 }) => {
-  const isReadOnly = !canWrite(currentUser);
+  const isUserAdmin = isAdmin(currentUser);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen) return null;
+  if (!isOpen || !isUserAdmin) return null;
 
   // Handler: Download SQLite Database File
   const handleDownload = async () => {
@@ -231,62 +231,45 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({
             </div>
 
             {/* Upload / Restore */}
-            {!isReadOnly ? (
-              <div className="p-4 rounded-xl border border-slate-200 hover:border-emerald-200 bg-white hover:bg-emerald-50/20 transition-all flex flex-col justify-between space-y-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
-                    <Upload className="w-4 h-4 text-emerald-600" />
-                    Upload Database
-                  </div>
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    Restore from an existing SQLite backup file (.sqlite or .db). Replaces existing database state.
-                  </p>
+            <div className="p-4 rounded-xl border border-slate-200 hover:border-emerald-200 bg-white hover:bg-emerald-50/20 transition-all flex flex-col justify-between space-y-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
+                  <Upload className="w-4 h-4 text-emerald-600" />
+                  Upload Database
                 </div>
-
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept=".sqlite,.db,.sqlite3,application/octet-stream,application/x-sqlite3"
-                  onChange={handleFileChange}
-                  className="hidden"
-                  id="database-upload-input"
-                />
-
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isDownloading || isUploading}
-                  className="w-full inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
-                >
-                  {isUploading ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Restoring...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-3.5 h-3.5" />
-                      <span>Upload & Restore</span>
-                    </>
-                  )}
-                </button>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Restore from an existing SQLite backup file (.sqlite or .db). Replaces existing database state.
+                </p>
               </div>
-            ) : (
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 flex flex-col justify-between space-y-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 text-slate-700 font-bold text-sm">
-                    <Shield className="w-4 h-4 text-slate-400" />
-                    Upload Database (Disabled)
-                  </div>
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    Your account has Read-Only permissions. Database restore and overwrites are disabled.
-                  </p>
-                </div>
-                <div className="text-[11px] text-amber-800 bg-amber-50 p-2 rounded border border-amber-200 font-medium">
-                  Read-Only Mode Active
-                </div>
-              </div>
-            )}
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept=".sqlite,.db,.sqlite3,application/octet-stream,application/x-sqlite3"
+                onChange={handleFileChange}
+                className="hidden"
+                id="database-upload-input"
+              />
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isDownloading || isUploading}
+                className="w-full inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
+              >
+                {isUploading ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Restoring...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Upload & Restore</span>
+                  </>
+                )}
+              </button>
+            </div>
 
           </div>
 
