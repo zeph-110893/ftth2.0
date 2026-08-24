@@ -1,7 +1,6 @@
 import React from 'react';
 import { Users, BarChart3, Receipt, AlertTriangle, Router, Activity } from 'lucide-react';
 import { ViewTab, AuthUser } from '../types';
-import { canWrite } from '../utils/auth';
 
 interface NavigationTabsProps {
   currentTab: ViewTab;
@@ -14,13 +13,10 @@ interface NavigationTabsProps {
 
 export const NavigationTabs: React.FC<NavigationTabsProps> = ({
   currentTab,
-  currentUser,
   onTabChange,
   overdueCount,
   expenseCount = 0,
 }) => {
-  const isReadOnly = !canWrite(currentUser);
-
   const allTabs = [
     {
       id: 'subscribers' as ViewTab,
@@ -49,7 +45,6 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
       id: 'mikrotik' as ViewTab,
       label: 'MikroTik RouterOS',
       icon: Router,
-      hidden: isReadOnly, // Strictly hide MikroTik tab for Read-Only permission
     },
     {
       id: 'activity' as ViewTab,
@@ -58,12 +53,10 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
     },
   ];
 
-  const visibleTabs = allTabs.filter((t) => !t.hidden);
-
   return (
     <div className="bg-slate-900 border-b border-slate-800/90 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar py-1.5">
-        {visibleTabs.map((tab) => {
+        {allTabs.map((tab) => {
           const isActive = currentTab === tab.id;
           const Icon = tab.icon;
           return (

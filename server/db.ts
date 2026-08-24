@@ -199,9 +199,10 @@ export async function getDb(): Promise<SqliteWrapper> {
           const plain = (u.password === 'admin123' && u.username === 'admin') ? 'admin' : u.password;
           wrapperInstance.run('UPDATE users SET password = ? WHERE id = ?', [hashPassword(plain), u.id]);
         }
-        if (!u.permission) {
-          const perm = (u.role === 'r' || u.role === 'viewer') ? 'R' : (u.role === 'rw' || u.role === 'editor') ? 'RW' : 'ADMIN';
-          wrapperInstance.run('UPDATE users SET permission = ? WHERE id = ?', [perm, u.id]);
+        if (!u.permission || u.permission === 'RW' || u.permission === 'R') {
+          const perm = (u.role === 'admin' || u.permission === 'ADMIN') ? 'ADMIN' : 'OPERATOR';
+          const role = perm === 'ADMIN' ? 'admin' : 'operator';
+          wrapperInstance.run('UPDATE users SET permission = ?, role = ? WHERE id = ?', [perm, role, u.id]);
         }
       }
     } catch (hashErr) {

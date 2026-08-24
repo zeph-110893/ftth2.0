@@ -1,4 +1,4 @@
-import { AuthUser } from '../types';
+import { AuthUser, UserPermission } from '../types';
 
 const TOKEN_KEY = 'ftth_billing_auth_token';
 const USER_KEY = 'ftth_billing_auth_user';
@@ -39,24 +39,28 @@ export function clearAuthSession(): void {
   }
 }
 
-export function getUserPermission(user?: AuthUser | null): 'ADMIN' | 'RW' | 'R' {
-  if (!user) return 'R';
-  if (user.permission === 'ADMIN' || user.permission === 'RW' || user.permission === 'R') {
+export function getUserPermission(user?: AuthUser | null): UserPermission {
+  if (!user) return 'OPERATOR';
+  if (user.permission === 'ADMIN' || user.permission === 'OPERATOR') {
     return user.permission;
   }
   if (user.role === 'admin') return 'ADMIN';
-  if (user.role === 'r' || user.role === 'viewer') return 'R';
-  return 'RW';
+  return 'OPERATOR';
 }
 
 export function canWrite(user?: AuthUser | null): boolean {
-  const perm = getUserPermission(user);
-  return perm === 'ADMIN' || perm === 'RW';
+  // Both Admin and Operator roles can perform standard billing operations
+  return Boolean(user);
 }
 
 export function isAdmin(user?: AuthUser | null): boolean {
   const perm = getUserPermission(user);
   return perm === 'ADMIN';
+}
+
+export function isOperator(user?: AuthUser | null): boolean {
+  const perm = getUserPermission(user);
+  return perm === 'OPERATOR';
 }
 
 export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {

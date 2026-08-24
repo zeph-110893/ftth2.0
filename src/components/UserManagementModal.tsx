@@ -29,7 +29,6 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   onClose,
   currentUser,
 }) => {
-  const isReadOnly = !canWrite(currentUser);
   const isUserAdmin = isAdmin(currentUser);
 
   const [users, setUsers] = useState<UserAccount[]>([]);
@@ -41,13 +40,13 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   const [isCreating, setIsCreating] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [permission, setPermission] = useState<'ADMIN' | 'RW' | 'R'>('RW');
+  const [permission, setPermission] = useState<'ADMIN' | 'OPERATOR'>('OPERATOR');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Form states for editing a user
   const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
   const [editPassword, setEditPassword] = useState('');
-  const [editPermission, setEditPermission] = useState<'ADMIN' | 'RW' | 'R'>('RW');
+  const [editPermission, setEditPermission] = useState<'ADMIN' | 'OPERATOR'>('OPERATOR');
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -84,8 +83,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     setError(null);
     setSuccessMsg(null);
 
-    if (isReadOnly || !isUserAdmin) {
-      setError('Permission denied. Read-only accounts cannot create new user accounts.');
+    if (!isUserAdmin) {
+      setError('Permission denied. Administrator privileges are required to create new user accounts.');
       return;
     }
 
@@ -114,10 +113,10 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
         throw new Error(data.error || 'Failed to create user account');
       }
 
-      setSuccessMsg(`User "${username}" created successfully with ${permission} permission.`);
+      setSuccessMsg(`User "${username}" created successfully as ${permission}.`);
       setUsername('');
       setPassword('');
-      setPermission('RW');
+      setPermission('OPERATOR');
       setIsCreating(false);
       fetchUsers();
     } catch (err: any) {
@@ -133,8 +132,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     setError(null);
     setSuccessMsg(null);
 
-    if (isReadOnly || !isUserAdmin) {
-      setError('Permission denied. Read-only accounts cannot modify user accounts.');
+    if (!isUserAdmin) {
+      setError('Permission denied. Administrator privileges are required to modify user accounts.');
       return;
     }
 
@@ -173,8 +172,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   };
 
   const handleDeleteUser = async (user: UserAccount) => {
-    if (isReadOnly || !isUserAdmin) {
-      setError('Permission denied. Read-only accounts cannot delete users.');
+    if (!isUserAdmin) {
+      setError('Permission denied. Administrator privileges are required to delete users.');
       return;
     }
 
@@ -202,11 +201,11 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   };
 
   const startEdit = (user: UserAccount) => {
-    if (isReadOnly || !isUserAdmin) return;
+    if (!isUserAdmin) return;
     setEditingUser(user);
     setEditPassword('');
-    const userPerm = user.permission || (user.role === 'admin' ? 'ADMIN' : user.role === 'r' ? 'R' : 'RW');
-    setEditPermission(userPerm as any);
+    const userPerm = (user.permission === 'ADMIN' || user.role === 'admin') ? 'ADMIN' : 'OPERATOR';
+    setEditPermission(userPerm);
     setIsCreating(false);
     setError(null);
     setSuccessMsg(null);
@@ -226,13 +225,13 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
-                <span>User Accounts & Permissions</span>
+                <span>User Accounts & Roles</span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
                   Admin Only
                 </span>
               </h2>
               <p className="text-xs text-slate-400">
-                Grant (R) Read Only, (RW) Read & Write, or (ADMIN) Administrator privileges.
+                Manage accounts with Operator or Administrator privileges.
               </p>
             </div>
           </div>
@@ -259,35 +258,25 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
           </div>
         )}
 
-        {/* Permission Legend */}
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 shrink-0 text-[11px]">
-          <div className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-start gap-2">
-            <div className="p-1 rounded bg-slate-800 text-slate-300 shrink-0 mt-0.5">
-              <Eye className="w-3 h-3" />
-            </div>
-            <div>
-              <div className="font-bold text-slate-200">(R) Read Only</div>
-              <div className="text-[10px] text-slate-400">Can view records, analytics, and portal without write access.</div>
-            </div>
-          </div>
-
-          <div className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-start gap-2">
+        {/* Role Legend */}
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 shrink-0 text-[11px]">
+          <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 flex items-start gap-2">
             <div className="p-1 rounded bg-cyan-950 text-cyan-400 shrink-0 mt-0.5">
-              <Edit3 className="w-3 h-3" />
+              <Edit3 className="w-3.5 h-3.5" />
             </div>
             <div>
-              <div className="font-bold text-cyan-300">(RW) Read & Write</div>
-              <div className="text-[10px] text-slate-400">Add subscribers, record payments, expenses & MikroTik syncs.</div>
+              <div className="font-bold text-cyan-300">Operator</div>
+              <div className="text-[10px] text-slate-400">Subscribers, payments, billing, expense tracking & day-to-day operations.</div>
             </div>
           </div>
 
-          <div className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-start gap-2">
+          <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 flex items-start gap-2">
             <div className="p-1 rounded bg-purple-950 text-purple-400 shrink-0 mt-0.5">
-              <ShieldCheck className="w-3 h-3" />
+              <ShieldCheck className="w-3.5 h-3.5" />
             </div>
             <div>
-              <div className="font-bold text-purple-300">(ADMIN) Administrator</div>
-              <div className="text-[10px] text-slate-400">Full control: manage users, permissions & database restores.</div>
+              <div className="font-bold text-purple-300">Administrator</div>
+              <div className="text-[10px] text-slate-400">Full system access: user accounts, database backup/restore, audit logs & MikroTik setup.</div>
             </div>
           </div>
         </div>
@@ -301,12 +290,12 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
                   <UserPlus className="w-4 h-4" />
-                  <span>Create New Operator Account</span>
+                  <span>Create New Account</span>
                 </h3>
                 <button
                   type="button"
                   onClick={() => setIsCreating(false)}
-                  className="text-xs text-slate-400 hover:text-slate-200"
+                  className="text-xs text-slate-400 hover:text-slate-200 cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -338,15 +327,14 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Assigned Permission *</label>
+                  <label className="block text-slate-300 font-semibold mb-1">Role *</label>
                   <select
                     value={permission}
-                    onChange={(e) => setPermission(e.target.value as any)}
+                    onChange={(e) => setPermission(e.target.value as 'ADMIN' | 'OPERATOR')}
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:border-cyan-500"
                   >
-                    <option value="R">(R) Read Only</option>
-                    <option value="RW">(RW) Read & Write</option>
-                    <option value="ADMIN">(ADMIN) Full Administrator</option>
+                    <option value="OPERATOR">Operator</option>
+                    <option value="ADMIN">Administrator (Full Access)</option>
                   </select>
                 </div>
               </div>
@@ -355,7 +343,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsCreating(false)}
-                  className="px-3 py-1.5 bg-slate-800 text-slate-300 text-xs font-semibold rounded-xl"
+                  className="px-3 py-1.5 bg-slate-800 text-slate-300 text-xs font-semibold rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -379,7 +367,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setEditingUser(null)}
-                  className="text-xs text-slate-400 hover:text-slate-200"
+                  className="text-xs text-slate-400 hover:text-slate-200 cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -398,15 +386,14 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Permission Level</label>
+                  <label className="block text-slate-300 font-semibold mb-1">Role</label>
                   <select
                     value={editPermission}
-                    onChange={(e) => setEditPermission(e.target.value as any)}
+                    onChange={(e) => setEditPermission(e.target.value as 'ADMIN' | 'OPERATOR')}
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none focus:border-purple-500"
                   >
-                    <option value="R">(R) Read Only</option>
-                    <option value="RW">(RW) Read & Write</option>
-                    <option value="ADMIN">(ADMIN) Full Administrator</option>
+                    <option value="OPERATOR">Operator</option>
+                    <option value="ADMIN">Administrator (Full Access)</option>
                   </select>
                 </div>
               </div>
@@ -415,7 +402,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setEditingUser(null)}
-                  className="px-3 py-1.5 bg-slate-800 text-slate-300 text-xs font-semibold rounded-xl"
+                  className="px-3 py-1.5 bg-slate-800 text-slate-300 text-xs font-semibold rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -432,7 +419,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
           ) : (
             <div className="flex justify-between items-center">
               <span className="text-xs font-semibold text-slate-300">Registered Accounts ({users.length})</span>
-              {!isReadOnly && isUserAdmin ? (
+              {isUserAdmin && (
                 <button
                   type="button"
                   onClick={() => {
@@ -446,11 +433,6 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                   <UserPlus className="w-3.5 h-3.5" />
                   <span>Add New User</span>
                 </button>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-[11px] text-amber-400 bg-amber-950/40 border border-amber-800/40 px-2 py-0.5 rounded-lg">
-                  <Lock className="w-3 h-3 text-amber-400" />
-                  <span>Read-Only: Add user disabled</span>
-                </span>
               )}
             </div>
           )}
@@ -469,14 +451,14 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-900/60 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                     <th className="py-2.5 px-3">User</th>
-                    <th className="py-2.5 px-3">Permission</th>
+                    <th className="py-2.5 px-3">Role</th>
                     <th className="py-2.5 px-3">Created</th>
                     <th className="py-2.5 px-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {users.map((u) => {
-                    const uPerm = u.permission || (u.role === 'admin' ? 'ADMIN' : u.role === 'r' ? 'R' : 'RW');
+                    const uPerm = (u.permission === 'ADMIN' || u.role === 'admin') ? 'ADMIN' : 'OPERATOR';
                     const isSelf = currentUser && currentUser.id === u.id;
 
                     return (
@@ -499,19 +481,14 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
                         <td className="py-2.5 px-3">
                           {uPerm === 'ADMIN' ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-950/80 text-purple-300 border border-purple-800/60">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-950/80 text-purple-300 border border-purple-800/60">
                               <ShieldCheck className="w-3 h-3" />
-                              <span>(ADMIN) Administrator</span>
-                            </span>
-                          ) : uPerm === 'RW' ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-800/60">
-                              <Edit3 className="w-3 h-3" />
-                              <span>(RW) Read & Write</span>
+                              <span>Administrator</span>
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">
-                              <Eye className="w-3 h-3 text-slate-400" />
-                              <span>(R) Read Only</span>
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-800/60">
+                              <Edit3 className="w-3 h-3" />
+                              <span>Operator</span>
                             </span>
                           )}
                         </td>
@@ -521,7 +498,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                         </td>
 
                         <td className="py-2.5 px-3 text-right">
-                          {!isReadOnly && isUserAdmin ? (
+                          {isUserAdmin ? (
                             <div className="flex items-center justify-end gap-1.5">
                               <button
                                 type="button"
@@ -544,7 +521,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                               )}
                             </div>
                           ) : (
-                            <span className="text-[10px] text-slate-500 font-mono">Read-Only</span>
+                            <span className="text-[10px] text-slate-500 font-mono">Protected</span>
                           )}
                         </td>
                       </tr>

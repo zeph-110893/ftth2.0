@@ -36,19 +36,17 @@ async function startServer() {
   // Active user sessions (in-memory with 7-day expiration)
   const activeSessions = new Map<
     string,
-    { userId: number; username: string; name: string; role: string; permission: 'ADMIN' | 'RW' | 'R'; expiresAt: number }
+    { userId: number; username: string; name: string; role: string; permission: 'ADMIN' | 'OPERATOR'; expiresAt: number }
   >();
 
   function createSession(user: { id: number; username: string; name: string; role: string; permission?: string }) {
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days
-    const permission: 'ADMIN' | 'RW' | 'R' = 
+    const permission: 'ADMIN' | 'OPERATOR' = 
       user.permission === 'ADMIN' || user.role === 'admin' 
         ? 'ADMIN' 
-        : user.permission === 'R' || user.role === 'r' || user.role === 'viewer' 
-        ? 'R' 
-        : 'RW';
-    const role = permission === 'ADMIN' ? 'admin' : permission === 'R' ? 'r' : 'rw';
+        : 'OPERATOR';
+    const role = permission === 'ADMIN' ? 'admin' : 'operator';
 
     activeSessions.set(token, {
       userId: user.id,
@@ -65,7 +63,7 @@ async function startServer() {
     };
   }
 
-  function verifyAuth(req: express.Request): { userId: number; username: string; name: string; role: string; permission: 'ADMIN' | 'RW' | 'R' } | null {
+  function verifyAuth(req: express.Request): { userId: number; username: string; name: string; role: string; permission: 'ADMIN' | 'OPERATOR' } | null {
     const authHeader = req.headers.authorization;
     if (!authHeader) return null;
     const token = authHeader.replace(/^Bearer\s+/i, '').trim();
@@ -253,12 +251,13 @@ async function startServer() {
         }
       }
 
+      const userPerm: 'ADMIN' | 'OPERATOR' = user.permission === 'ADMIN' || user.role === 'admin' ? 'ADMIN' : 'OPERATOR';
       const session = createSession({
         id: user.id,
         username: user.username,
-        name: user.name || 'Administrator',
-        role: user.role || 'admin',
-        permission: user.permission || (user.role === 'admin' ? 'ADMIN' : user.role === 'r' ? 'R' : 'RW'),
+        name: user.name || (userPerm === 'ADMIN' ? 'Administrator' : 'Operator'),
+        role: userPerm === 'ADMIN' ? 'admin' : 'operator',
+        permission: userPerm,
       });
 
       // Record successful login in audit log
@@ -716,19 +715,6 @@ async function startServer() {
 
     (req as any).user = session;
 
-    // Enforce Read-Only ('R') permission:
-    // Users with 'R' permission can only execute read (GET) requests.
-    // Allow profile change password and logout.
-    const isWriteMethod = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method.toUpperCase());
-    const isAllowedProfileWrite = req.path.startsWith('/auth/change-password') || req.path.startsWith('/auth/logout');
-
-    if (session.permission === 'R' && isWriteMethod && !isAllowedProfileWrite) {
-      return res.status(403).json({
-        error: 'Read-only access (R). You do not have write permission to modify records or system settings.',
-        permissionDenied: true,
-      });
-    }
-
     // Enforce Admin-only endpoints:
     // Only users with ADMIN permission can access user management, database restores, or database reset.
     if (
@@ -758,7 +744,7 @@ async function startServer() {
       );
       const formatted = users.map((u: any) => ({
         ...u,
-        permission: u.permission || (u.role === 'admin' ? 'ADMIN' : u.role === 'r' ? 'R' : 'RW'),
+        permission: u.permission === 'ADMIN' || u.role === 'admin' ? 'ADMIN' : 'OPERATOR',
       }));
       res.json(formatted);
     } catch (err: any) {
@@ -787,17 +773,14 @@ async function startServer() {
         return res.status(400).json({ error: `Username "${cleanUsername}" is already taken` });
       }
 
-      let userPerm: 'ADMIN' | 'RW' | 'R' = 'RW';
-      let userRole = 'rw';
+      let userPerm: 'ADMIN' | 'OPERATOR' = 'OPERATOR';
+      let userRole = 'operator';
       if (permission === 'ADMIN' || role === 'admin') {
         userPerm = 'ADMIN';
         userRole = 'admin';
-      } else if (permission === 'R' || role === 'r' || role === 'viewer') {
-        userPerm = 'R';
-        userRole = 'r';
       } else {
-        userPerm = 'RW';
-        userRole = 'rw';
+        userPerm = 'OPERATOR';
+        userRole = 'operator';
       }
 
       const maxUser = await db.get('SELECT MAX(id) as maxId FROM users');
@@ -816,7 +799,7 @@ async function startServer() {
       );
 
       const currentUser = (req as any).user;
-      const permLabel = userPerm === 'ADMIN' ? 'Administrator (Full Access)' : userPerm === 'RW' ? 'Read & Write (RW)' : 'Read Only (R)';
+      const permLabel = userPerm === 'ADMIN' ? 'Administrator (Full Access)' : 'Operator (Operational Access)';
       await recordAuditLog(db, {
         userId: currentUser?.userId,
         username: currentUser?.username || 'admin',
@@ -845,20 +828,17 @@ async function startServer() {
       }
 
       const { name, password, role, permission } = req.body;
-      let newPerm = targetUser.permission || (targetUser.role === 'admin' ? 'ADMIN' : targetUser.role === 'r' ? 'R' : 'RW');
-      let newRole = targetUser.role || 'rw';
+      let newPerm: 'ADMIN' | 'OPERATOR' = targetUser.permission === 'ADMIN' || targetUser.role === 'admin' ? 'ADMIN' : 'OPERATOR';
+      let newRole = newPerm === 'ADMIN' ? 'admin' : 'operator';
 
       if (permission || role) {
-        const selected = permission || (role === 'admin' ? 'ADMIN' : role === 'r' ? 'R' : 'RW');
+        const selected = permission || (role === 'admin' ? 'ADMIN' : 'OPERATOR');
         if (selected === 'ADMIN') {
           newPerm = 'ADMIN';
           newRole = 'admin';
-        } else if (selected === 'R') {
-          newPerm = 'R';
-          newRole = 'r';
         } else {
-          newPerm = 'RW';
-          newRole = 'rw';
+          newPerm = 'OPERATOR';
+          newRole = 'operator';
         }
       }
 
@@ -940,7 +920,7 @@ async function startServer() {
         userRole: currentUser?.role || 'admin',
         action: 'USER_DELETE',
         category: 'user',
-        description: `Deleted user account "${targetUser.username}" (${targetUser.permission || 'RW'})`,
+        description: `Deleted user account "${targetUser.username}" (${targetUser.permission || 'OPERATOR'})`,
         details: { deletedUserId: id, username: targetUser.username },
         ipAddress: getClientIp(req),
       });

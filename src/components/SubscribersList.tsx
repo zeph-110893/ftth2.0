@@ -317,15 +317,13 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                       <UserCheck className="w-8 h-8 text-slate-300" />
                       <p className="font-medium text-slate-600 text-sm">No subscribers found</p>
                       <p className="text-xs text-slate-400">Try adjusting your search query or filter parameters.</p>
-                      {!isReadOnly && (
-                        <button
-                          type="button"
-                          onClick={onAddSubscriber}
-                          className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 text-white font-medium text-xs rounded-lg shadow-xs hover:bg-cyan-500 transition-colors cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" /> Add New Subscriber
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={onAddSubscriber}
+                        className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 text-white font-medium text-xs rounded-lg shadow-xs hover:bg-cyan-500 transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add New Subscriber
+                      </button>
                     </div>
                   </td>
                 </tr>

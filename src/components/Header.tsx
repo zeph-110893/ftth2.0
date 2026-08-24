@@ -61,9 +61,8 @@ export const Header: React.FC<HeaderProps> = ({
   const userMenuRef = useRef<HTMLDivElement>(null);
   const toolsMenuRef = useRef<HTMLDivElement>(null);
 
-  const userPerm = currentUser?.permission || (currentUser?.role === 'admin' ? 'ADMIN' : currentUser?.role === 'r' ? 'R' : 'RW');
+  const userPerm = currentUser?.permission === 'ADMIN' || currentUser?.role === 'admin' ? 'ADMIN' : 'OPERATOR';
   const isAdmin = userPerm === 'ADMIN';
-  const isReadOnly = userPerm === 'R';
 
   // Keep live time updated every second
   useEffect(() => {
@@ -171,27 +170,17 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Action Group: Primary Buttons & Tools Menu */}
             <div className="flex items-center gap-2">
               
-              {/* Read Only Indicator Badge for (R) users */}
-              {isReadOnly && (
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-950/40 border border-amber-800/60 text-[11px] font-bold text-amber-300">
-                  <Eye className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Read-Only Mode (R)</span>
-                </div>
-              )}
-
               {/* Primary Action: Add Subscriber */}
-              {!isReadOnly && (
-                <button
-                  type="button"
-                  onClick={onAddSubscriber}
-                  title="Add a new subscriber"
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 sm:py-2 text-xs font-bold rounded-xl transition-all shadow-xs border bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white border-cyan-500 cursor-pointer hover:shadow-cyan-900/30"
-                >
-                  <Plus className="w-3.5 h-3.5 shrink-0" />
-                  <span className="hidden sm:inline">Add Subscriber</span>
-                  <span className="sm:hidden">Add</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={onAddSubscriber}
+                title="Add a new subscriber"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 sm:py-2 text-xs font-bold rounded-xl transition-all shadow-xs border bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white border-cyan-500 cursor-pointer hover:shadow-cyan-900/30"
+              >
+                <Plus className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline">Add Subscriber</span>
+                <span className="sm:hidden">Add</span>
+              </button>
 
               {/* Tools / More Menu */}
               <div className="relative" ref={toolsMenuRef}>
@@ -247,7 +236,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {onAddExpense && !isReadOnly && (
+                    {onAddExpense && (
                       <button
                         type="button"
                         onClick={() => {
@@ -284,7 +273,7 @@ export const Header: React.FC<HeaderProps> = ({
                         {currentUser.username}
                       </span>
                       <span className="text-[9px] font-bold text-cyan-400">
-                        {userPerm === 'ADMIN' ? 'Admin' : userPerm === 'RW' ? 'RW' : 'R (Read)'}
+                        {isAdmin ? 'Admin' : 'Operator'}
                       </span>
                     </div>
                     <ChevronDown className="w-3 h-3 text-slate-400" />
@@ -297,20 +286,15 @@ export const Header: React.FC<HeaderProps> = ({
                           {currentUser.username}
                         </div>
                         <div className="text-[10px] text-cyan-400 font-semibold flex items-center gap-1 mt-0.5">
-                          {userPerm === 'ADMIN' ? (
+                          {isAdmin ? (
                             <>
                               <ShieldCheck className="w-3 h-3 text-purple-400" />
                               <span className="text-purple-300 font-bold">Administrator</span>
                             </>
-                          ) : userPerm === 'RW' ? (
-                            <>
-                              <Edit3 className="w-3 h-3 text-cyan-400" />
-                              <span className="text-cyan-300 font-bold">Read & Write (RW)</span>
-                            </>
                           ) : (
                             <>
-                              <Eye className="w-3 h-3 text-amber-400" />
-                              <span className="text-amber-300 font-bold">Read-Only (R)</span>
+                              <Edit3 className="w-3 h-3 text-cyan-400" />
+                              <span className="text-cyan-300 font-bold">Operator</span>
                             </>
                           )}
                         </div>

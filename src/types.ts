@@ -125,20 +125,22 @@ export interface MikroTikInterface {
   txPacket?: number;
 }
 
+export type UserPermission = 'ADMIN' | 'OPERATOR';
+
 export interface AuthUser {
   id: number;
   username: string;
   name: string;
-  role: string; // 'admin' | 'rw' | 'r'
-  permission?: 'ADMIN' | 'RW' | 'R';
+  role: 'admin' | 'operator' | string;
+  permission?: UserPermission;
 }
 
 export interface UserAccount {
   id: number;
   username: string;
   name: string;
-  role: string; // 'admin' | 'rw' | 'r'
-  permission: 'ADMIN' | 'RW' | 'R';
+  role: 'admin' | 'operator' | string;
+  permission: UserPermission;
   createdAt: string;
   lastLogin?: string | null;
 }
