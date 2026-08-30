@@ -12,6 +12,7 @@ import {
   getRouterSecrets,
   getRouterActiveSessions,
   getRouterDhcpLeases,
+  getRouterIpAddresses,
   deleteDhcpLease,
   toggleSubscriberInternet,
   batchSyncSubscribersToRouter,
@@ -80,17 +81,33 @@ async function startServer() {
   // Helper to extract clean client IP
   function cleanIpStr(ip: any): string {
     if (!ip || typeof ip !== 'string') return '127.0.0.1';
-    const trimmed = ip.trim();
+    let trimmed = ip.trim();
     if (trimmed.startsWith('::ffff:')) {
-      return trimmed.substring(7);
+      trimmed = trimmed.substring(7);
+    }
+    if (trimmed === '::1') {
+      return '127.0.0.1';
+    }
+    // Remove port if present (e.g. 192.168.105.50:51234 or [::1]:80)
+    if (trimmed.includes(':') && trimmed.includes('.')) {
+      trimmed = trimmed.split(':')[0];
     }
     return trimmed;
   }
 
   function getClientIp(req: express.Request): string {
     try {
+      // 1. Check query parameter override if forwarded by router captive portal or diagnostics (?ip=, ?client_ip=, ?user_ip=)
+      if (req.query) {
+        const queryIp = req.query.ip || req.query.client_ip || req.query.user_ip;
+        if (typeof queryIp === 'string' && queryIp.trim()) {
+          return cleanIpStr(queryIp);
+        }
+      }
+
+      // 2. Check standard proxy/router headers
       const forwarded = req.headers['x-forwarded-for'];
-      if (typeof forwarded === 'string') {
+      if (typeof forwarded === 'string' && forwarded) {
         const first = forwarded.split(',')[0].trim();
         if (first) return cleanIpStr(first);
       }
@@ -98,6 +115,20 @@ async function startServer() {
       if (typeof realIp === 'string' && realIp) {
         return cleanIpStr(realIp);
       }
+      const cfConnectingIp = req.headers['cf-connecting-ip'];
+      if (typeof cfConnectingIp === 'string' && cfConnectingIp) {
+        return cleanIpStr(cfConnectingIp);
+      }
+      const trueClientIp = req.headers['true-client-ip'];
+      if (typeof trueClientIp === 'string' && trueClientIp) {
+        return cleanIpStr(trueClientIp);
+      }
+      const xClientIp = req.headers['x-client-ip'];
+      if (typeof xClientIp === 'string' && xClientIp) {
+        return cleanIpStr(xClientIp);
+      }
+
+      // 3. Socket remote address
       if (req.socket && req.socket.remoteAddress) {
         return cleanIpStr(req.socket.remoteAddress);
       }
@@ -105,6 +136,47 @@ async function startServer() {
     } catch {
       return '127.0.0.1';
     }
+  }
+
+  // Automatic VLAN & Subscriber Detection engine by client IP
+  // Optimized for instantaneous matching based on subscriber IP 3rd octet (e.g. 192.168.105.X -> VLAN 105)
+  function autoDetectSubscriberByIp(
+    clientIp: string,
+    subscribers: any[]
+  ): {
+    matched: boolean;
+    vlan: number | null;
+    matchedBy: 'vlan_subnet' | 'ip_dhcp' | 'none';
+    subscriber: any | null;
+  } {
+    if (!clientIp || !Array.isArray(subscribers) || subscribers.length === 0) {
+      return { matched: false, vlan: null, matchedBy: 'none', subscriber: null };
+    }
+
+    const cleanIp = cleanIpStr(clientIp);
+    const ipParts = cleanIp.split('.').map((p) => parseInt(p, 10));
+
+    // 1. PRIMARY & FASTEST: Direct 3rd Octet Match (Standard ISP / FTTH Subnet pattern: 192.168.<VLAN>.X, 10.0.<VLAN>.X, 172.16.<VLAN>.X, 100.64.<VLAN>.X)
+    if (ipParts.length === 4 && !ipParts.some(isNaN)) {
+      const thirdOctet = ipParts[2];
+      if (thirdOctet > 0) {
+        const subBy3rd = subscribers.find((s: any) => Number(s.vlan) === thirdOctet);
+        if (subBy3rd) {
+          return { matched: true, vlan: thirdOctet, matchedBy: 'vlan_subnet', subscriber: subBy3rd };
+        }
+      }
+
+      // Check 2nd octet if network uses 10.<VLAN>.X.X scheme
+      const secondOctet = ipParts[1];
+      if (secondOctet > 0) {
+        const subBy2nd = subscribers.find((s: any) => Number(s.vlan) === secondOctet);
+        if (subBy2nd) {
+          return { matched: true, vlan: secondOctet, matchedBy: 'vlan_subnet', subscriber: subBy2nd };
+        }
+      }
+    }
+
+    return { matched: false, vlan: null, matchedBy: 'none', subscriber: null };
   }
 
   // Helper to record persistent audit logs for key administrative actions
@@ -392,25 +464,14 @@ async function startServer() {
     return `${mb.toFixed(1)} MB`;
   }
 
-  // Public Subscriber Portal Subscribers List (for dynamic dropdown)
+  // Public Subscriber Portal Subscribers endpoint (disabled for public self-service security)
   app.get('/api/portal/subscribers', async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
-    try {
-      const subscribers = await db.all('SELECT id, first, last, vlan, rate, status FROM subscribers ORDER BY dueDay ASC, id ASC');
-      const formatted = subscribers.map((s: any) => ({
-        id: s.id,
-        name: `${capitalizeWords(s.first || '')} ${capitalizeWords(s.last || '')}`.trim(),
-        vlan: s.vlan ? Number(s.vlan) : null,
-        rate: s.rate || 600,
-        status: s.status || 'Active',
-      }));
-      res.json({ success: true, subscribers: formatted });
-    } catch (err: any) {
-      res.json({ success: true, subscribers: [] });
-    }
+    // Manual selection is disabled per policy: subscribers are strictly auto-detected by IP
+    res.json({ success: true, subscribers: [] });
   });
 
-  // Public Subscriber Portal Info (Auto-detected by VLAN or Client IP)
+  // Public Subscriber Portal Info (Strictly Auto-detected based on client IP)
   app.get('/api/portal/subscriber-info', async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     try {
@@ -421,12 +482,15 @@ async function startServer() {
         console.warn('DB query in subscriber-info failed:', dbErr);
       }
 
+      const clientIp = getClientIp(req);
+
       if (!subscribers || subscribers.length === 0) {
         return res.json({
           success: true,
+          matched: false,
           noSubscribers: true,
           detectedVlan: null,
-          detectedIp: getClientIp(req),
+          detectedIp: clientIp,
           matchedBy: 'none',
           subscriber: null,
           billing: null,
@@ -435,68 +499,27 @@ async function startServer() {
         });
       }
 
-      const clientIp = getClientIp(req);
-      let targetVlan: number | null = null;
-      let matchedBy: 'vlan_param' | 'ip_dhcp' | 'vlan_subnet' | 'manual' | 'default' = 'default';
+      // Run instantaneous IP-to-VLAN 3rd octet auto-detection
+      const detection = autoDetectSubscriberByIp(clientIp, subscribers);
 
-      // 1. Check if explicitly provided via query parameter (?vlan=101 or ?id=1)
-      if (req.query.vlan) {
-        const parsed = parseInt(String(req.query.vlan), 10);
-        if (!isNaN(parsed)) {
-          targetVlan = parsed;
-          matchedBy = 'vlan_param';
-        }
-      } else if (req.query.id || req.query.subId) {
-        const subId = parseInt(String(req.query.id || req.query.subId), 10);
-        const subById = subscribers.find((s: any) => s.id === subId);
-        if (subById && subById.vlan) {
-          targetVlan = Number(subById.vlan);
-          matchedBy = 'vlan_param';
-        }
+      // If client IP is not recognized or not matching any subscriber
+      if (!detection.matched || !detection.subscriber) {
+        return res.json({
+          success: true,
+          matched: false,
+          detectedVlan: null,
+          detectedIp: clientIp,
+          matchedBy: 'none',
+          subscriber: null,
+          billing: null,
+          bandwidth: null,
+          devices: [],
+        });
       }
 
-      // 2. Auto-detect from MikroTik DHCP leases if not provided
-      let routerDhcpResult: any = null;
-      try {
-        routerDhcpResult = await getRouterDhcpLeases(db, subscribers);
-      } catch (e) {
-        // Router may be offline / fallback
-      }
-
-      if (!targetVlan && routerDhcpResult && routerDhcpResult.leases) {
-        const matchedLease = routerDhcpResult.leases.find((l: any) => l.address === clientIp);
-        if (matchedLease) {
-          // Find subscriber with matching MAC or Server name
-          const subByMac = subscribers.find((s: any) => s.macAddress && s.macAddress.toLowerCase() === (matchedLease.macAddress || '').toLowerCase());
-          if (subByMac && subByMac.vlan) {
-            targetVlan = Number(subByMac.vlan);
-            matchedBy = 'ip_dhcp';
-          }
-        }
-      }
-
-      // 3. Auto-detect from Subnet pattern (e.g. 192.168.101.45 -> VLAN 101, 10.101.x.x -> VLAN 101)
-      if (!targetVlan) {
-        const subnetMatch = clientIp.match(/^(?:192\.168|10|172\.16)\.(\d+)\./);
-        if (subnetMatch && subnetMatch[1]) {
-          const detectedSubnetVlan = parseInt(subnetMatch[1], 10);
-          const subBySubnet = subscribers.find((s: any) => Number(s.vlan) === detectedSubnetVlan);
-          if (subBySubnet) {
-            targetVlan = detectedSubnetVlan;
-            matchedBy = 'vlan_subnet';
-          }
-        }
-      }
-
-      // 4. Default fallback (first subscriber) if no match found
-      let selectedSub = subscribers.find((s: any) => Number(s.vlan) === targetVlan);
-      if (!selectedSub) {
-        selectedSub = subscribers[0];
-        targetVlan = selectedSub?.vlan ? Number(selectedSub.vlan) : 100;
-        if (matchedBy !== 'vlan_param') {
-          matchedBy = 'default';
-        }
-      }
+      const selectedSub = detection.subscriber;
+      const targetVlan = detection.vlan || (selectedSub.vlan ? Number(selectedSub.vlan) : null);
+      const matchedBy = detection.matchedBy;
 
       if (!selectedSub) {
         return res.json({
@@ -616,14 +639,20 @@ async function startServer() {
 
       // Filter and sanitize Connected Devices (DHCP Leases)
       // STRICT REQUIREMENT: In DHCP list DO NOT show MAC address, ONLY device name + local IP
-      const allLeases = routerDhcpResult?.leases || [];
-      const matchingLeases = allLeases.filter((l: any) => {
-        if (l.server && l.server.toLowerCase().includes(`vlan${targetVlan}`)) return true;
-        if (l.address && l.address.includes(`.${targetVlan}.`)) return true;
-        if (selectedSub.macAddress && l.macAddress && l.macAddress.toLowerCase() === selectedSub.macAddress.toLowerCase()) return true;
-        if (l.comment && l.comment.toLowerCase().includes(lastName.toLowerCase())) return true;
-        return false;
-      });
+      let matchingLeases: any[] = [];
+      try {
+        const routerDhcpResult = await getRouterDhcpLeases(db, subscribers);
+        const allLeases = routerDhcpResult?.leases || [];
+        matchingLeases = allLeases.filter((l: any) => {
+          if (l.server && l.server.toLowerCase().includes(`vlan${targetVlan}`)) return true;
+          if (l.address && l.address.includes(`.${targetVlan}.`)) return true;
+          if (selectedSub.macAddress && l.macAddress && l.macAddress.toLowerCase() === selectedSub.macAddress.toLowerCase()) return true;
+          if (l.comment && l.comment.toLowerCase().includes(lastName.toLowerCase())) return true;
+          return false;
+        });
+      } catch {
+        matchingLeases = [];
+      }
 
       // If no live leases were matched, generate representative connected home devices
       let devicesList: Array<{ id: string; deviceName: string; ipAddress: string; status: string; isStatic: boolean }> = [];
@@ -649,6 +678,7 @@ async function startServer() {
 
       const responsePayload = {
         success: true,
+        matched: true,
         detectedVlan: targetVlan,
         detectedIp: clientIp,
         matchedBy,

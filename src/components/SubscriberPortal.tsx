@@ -26,20 +26,10 @@ interface SubscriberPortalProps {
   onOpenAdminLogin?: () => void;
 }
 
-interface PortalSubOption {
-  id: number;
-  name: string;
-  vlan: number | null;
-  rate: number;
-  status: string;
-}
-
 export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
   onOpenAdminLogin,
 }) => {
   const [data, setData] = useState<SubscriberPortalData | null>(null);
-  const [subscriberOptions, setSubscriberOptions] = useState<PortalSubOption[]>([]);
-  const [selectedVlan, setSelectedVlan] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,39 +46,14 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
     return () => clearTimeout(timer);
   }, [cooldownRemaining]);
 
-  // Fetch available real subscribers for the dropdown selector
-  const fetchSubscribersList = useCallback(async () => {
-    try {
-      const res = await fetch('/api/portal/subscribers');
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && Array.isArray(json.subscribers)) {
-          setSubscriberOptions(json.subscribers);
-          if (json.subscribers.length > 0 && selectedVlan === null) {
-            const firstValidVlan = json.subscribers.find((s: PortalSubOption) => s.vlan)?.vlan || json.subscribers[0].id;
-            setSelectedVlan(firstValidVlan);
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('Could not fetch portal subscribers list:', err);
-    }
-  }, [selectedVlan]);
-
-  useEffect(() => {
-    fetchSubscribersList();
-  }, [fetchSubscribersList]);
-
-  // Fetch subscriber portal info
-  const fetchPortalData = useCallback(async (vlanOverride?: number | null, silent = false) => {
-    const vlanToFetch = vlanOverride !== undefined ? vlanOverride : selectedVlan;
+  // Fetch subscriber portal info strictly via automatic IP detection (3rd octet VLAN)
+  const fetchPortalData = useCallback(async (silent = false) => {
     try {
       if (!silent) setIsLoading(true);
       else setIsRefreshing(true);
       setError(null);
 
-      const url = vlanToFetch ? `/api/portal/subscriber-info?vlan=${vlanToFetch}` : '/api/portal/subscriber-info';
-      const res = await fetch(url, {
+      const res = await fetch('/api/portal/subscriber-info', {
         headers: {
           Accept: 'application/json',
         },
@@ -110,47 +75,38 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
       if (json && json.success) {
         setData(json);
         setRateLimitNotice(null);
-        if (json.detectedVlan && selectedVlan === null) {
-          setSelectedVlan(json.detectedVlan);
-        }
         setLastRefreshed(new Date());
       } else {
-        if (!data) {
-          setData(null);
-        }
         setError(json?.error || 'No subscriber data found.');
       }
     } catch (err: any) {
       console.warn('Portal data fetch notice:', err?.message || err);
-      if (!data) {
-        setData(null);
-      }
       setError(err?.message || 'Unable to connect to server');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [selectedVlan, data]);
+  }, []);
 
   useEffect(() => {
     fetchPortalData();
   }, [fetchPortalData]);
 
-  // Auto-refresh bandwidth telemetry every 15 seconds ONLY when page is active/visible
+  // Periodic bandwidth telemetry refresh (every 30 seconds) ONLY when page is active/visible and subscriber is matched
   useEffect(() => {
     if (!data?.subscriber) return;
     const timer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        fetchPortalData(selectedVlan, true);
+        fetchPortalData(true);
       }
-    }, 15000);
+    }, 30000);
     return () => clearInterval(timer);
-  }, [data?.subscriber, selectedVlan, fetchPortalData]);
+  }, [Boolean(data?.subscriber), fetchPortalData]);
 
   const handleManualRefresh = () => {
     if (cooldownRemaining > 0 || isRefreshing) return;
     setCooldownRemaining(3); // 3-second anti-spam client cooldown
-    fetchPortalData(selectedVlan, true);
+    fetchPortalData(true);
   };
 
   // Helper to pick device icon based on device name
@@ -221,28 +177,12 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap justify-end">
-            {/* Real VLAN Selector / Preview Switcher */}
-            {subscriberOptions.length > 0 && (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800 rounded-lg border border-slate-700 text-xs text-slate-300">
+            {/* Detected IP Display */}
+            {data?.detectedIp && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/90 rounded-lg border border-slate-700 text-xs text-slate-300 font-mono shadow-xs">
                 <Globe className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                <label htmlFor="vlan-select" className="text-[11px] text-slate-400 shrink-0">Subscriber:</label>
-                <select
-                  id="vlan-select"
-                  value={selectedVlan || ''}
-                  onChange={(e) => {
-                    const newVlan = e.target.value ? parseInt(e.target.value, 10) : null;
-                    setSelectedVlan(newVlan);
-                    fetchPortalData(newVlan, false);
-                  }}
-                  className="bg-slate-900 border border-slate-700 text-cyan-300 font-mono text-xs rounded px-1.5 py-0.5 focus:outline-none focus:border-cyan-500 cursor-pointer"
-                  title="Select subscriber connection"
-                >
-                  {subscriberOptions.map((sub) => (
-                    <option key={sub.id} value={sub.vlan || sub.id}>
-                      {sub.vlan ? `VLAN #${sub.vlan}` : `#${sub.id}`} - {sub.name} (Plan {sub.rate})
-                    </option>
-                  ))}
-                </select>
+                <span className="text-[11px] text-slate-400">Client IP:</span>
+                <span className="text-cyan-300 font-bold">{data.detectedIp}</span>
               </div>
             )}
 
@@ -295,47 +235,96 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
           <div className="flex flex-col items-center justify-center py-28 text-slate-500 gap-3">
             <div className="w-10 h-10 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin" />
             <span className="text-sm font-semibold text-slate-600 font-mono">
-              Detecting VLAN & querying MikroTik router...
+              Auto-detecting subscriber VLAN by IP & querying router...
             </span>
-            <p className="text-xs text-slate-400">No login required — retrieving live connection telemetry</p>
+            <p className="text-xs text-slate-400">Strict IP Auto-Detection — no manual selection required</p>
           </div>
         ) : !data || !data.subscriber ? (
-          <div className="bg-white rounded-2xl p-10 border border-slate-200 text-center space-y-4 max-w-lg mx-auto shadow-sm my-8">
-            <div className="w-14 h-14 rounded-2xl bg-cyan-50 text-cyan-600 flex items-center justify-center mx-auto border border-cyan-100">
-              <Wifi className="w-7 h-7" />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-slate-900">No Subscriber Accounts Found</h3>
-              <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-                The database is clean and has no active subscriber records registered yet.
-              </p>
-              <p className="text-xs text-slate-400 mt-1">
-                Log in to the Admin Panel to register your subscribers, assign VLANs, and track payments.
-              </p>
-            </div>
-            {onOpenAdminLogin && (
-              <div className="pt-3">
-                <button
-                  onClick={onOpenAdminLogin}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer shadow-sm"
-                >
-                  <Lock className="w-4 h-4 text-cyan-400" />
-                  <span>Log In to Admin Panel</span>
-                </button>
+          data?.noSubscribers ? (
+            <div className="bg-white rounded-2xl p-10 border border-slate-200 text-center space-y-4 max-w-lg mx-auto shadow-sm my-8">
+              <div className="w-14 h-14 rounded-2xl bg-cyan-50 text-cyan-600 flex items-center justify-center mx-auto border border-cyan-100">
+                <Wifi className="w-7 h-7" />
               </div>
-            )}
-          </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">No Subscriber Accounts Found</h3>
+                <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                  The database has no active subscriber records registered yet.
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Log in to the Admin Panel to register subscribers, assign VLANs, and record payments.
+                </p>
+              </div>
+              {onOpenAdminLogin && (
+                <div className="pt-3">
+                  <button
+                    onClick={onOpenAdminLogin}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer shadow-sm"
+                  >
+                    <Lock className="w-4 h-4 text-cyan-400" />
+                    <span>Log In to Admin Panel</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl p-8 sm:p-10 border border-slate-200/90 text-center space-y-5 max-w-lg mx-auto shadow-sm my-8">
+              <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200/60 shadow-xs">
+                <Globe className="w-8 h-8 text-amber-600" />
+              </div>
+              <div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-800 rounded-full text-xs font-semibold mb-3">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Unrecognized Network Connection</span>
+                </div>
+                <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
+                  Subscriber Not Found for Current IP
+                </h3>
+                <div className="mt-3 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs font-mono text-slate-700">
+                  Detected IP: <strong className="text-cyan-700">{data?.detectedIp || 'Unknown'}</strong>
+                </div>
+                <p className="text-xs text-slate-500 mt-3 leading-relaxed">
+                  The Subscriber Portal strictly auto-detects your account based on your device's connection IP address. No subscriber VLAN matches this address.
+                </p>
+                <p className="text-xs text-slate-400 mt-2">
+                  Please connect directly to your home FTTH fiber WiFi router / assigned VLAN, or contact your ISP administrator to verify your IP assignment.
+                </p>
+              </div>
+
+              <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  onClick={handleManualRefresh}
+                  disabled={isRefreshing || cooldownRemaining > 0}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  <span>Re-Detect IP Connection</span>
+                </button>
+                {onOpenAdminLogin && (
+                  <button
+                    onClick={onOpenAdminLogin}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors cursor-pointer border border-slate-200"
+                  >
+                    <Lock className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Admin Login</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )
         ) : (
           <>
             {/* Detection Info Bar */}
             <div className="bg-white rounded-xl p-3.5 border border-slate-200/80 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
-              <div className="flex items-center gap-2 text-slate-600">
-                <ShieldCheck className="w-4 h-4 text-emerald-500" />
+              <div className="flex items-center gap-2 text-slate-600 flex-wrap">
+                <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
                 <span>
                   Connected as <strong className="text-slate-900">{data.subscriber.name}</strong> (Subscriber #{data.subscriber.id})
                 </span>
-                <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-mono font-semibold rounded text-[11px]">
+                <span className="px-2 py-0.5 bg-cyan-50 text-cyan-700 font-mono font-bold rounded text-[11px] border border-cyan-200/60">
                   VLAN #{data.detectedVlan || data.subscriber.vlan || '100'}
+                </span>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  (Auto-Detected from IP {data.detectedIp})
                 </span>
               </div>
               <div className="flex items-center gap-2 text-[11px] text-slate-400">

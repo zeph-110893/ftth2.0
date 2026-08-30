@@ -214,6 +214,27 @@ export async function getRouterInterfaces(db: SqliteWrapper, subscribers: any[] 
   }
 }
 
+export async function getRouterIpAddresses(db: SqliteWrapper) {
+  const cfg = getMikrotikConfig(db);
+
+  try {
+    const addresses = await fetchFromRouterOS(cfg, 'ip/address');
+    return {
+      success: true,
+      addresses: (Array.isArray(addresses) ? addresses : []).map((a: any) => ({
+        id: a['.id'],
+        address: a.address || '',
+        network: a.network || '',
+        interface: a.interface || '',
+        comment: a.comment || '',
+        disabled: a.disabled === 'true' || a.disabled === true,
+      })),
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message, addresses: [] };
+  }
+}
+
 export async function getRouterResources(db: SqliteWrapper, subscribers: any[] = []) {
   const cfg = getMikrotikConfig(db);
 

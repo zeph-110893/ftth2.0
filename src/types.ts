@@ -184,10 +184,12 @@ export interface SubscriberPortalBandwidth {
 
 export interface SubscriberPortalData {
   success?: boolean;
+  matched?: boolean;
+  noSubscribers?: boolean;
   detectedVlan: number | null;
   detectedIp: string;
-  matchedBy: 'ip_dhcp' | 'vlan_param' | 'vlan_subnet' | 'manual' | 'default';
-  subscriber: {
+  matchedBy: 'ip_dhcp' | 'ip_router_address' | 'vlan_subnet' | 'vlan_param' | 'none';
+  subscriber?: {
     id: number;
     name: string;
     first: string;
@@ -198,8 +200,8 @@ export interface SubscriberPortalData {
     dueDay: number | null;
     address?: string;
     phone?: string;
-  };
-  billing: {
+  } | null;
+  billing?: {
     currentMonth: string;
     statusPill: 'active' | 'due' | 'overdue' | 'inactive';
     isPaidCurrent: boolean;
@@ -214,7 +216,7 @@ export interface SubscriberPortalData {
       ts: string;
       referenceNo?: string;
     }>;
-  };
-  bandwidth: SubscriberPortalBandwidth;
+  } | null;
+  bandwidth?: SubscriberPortalBandwidth | null;
   devices: SubscriberPortalDevice[];
 }
