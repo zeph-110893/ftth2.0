@@ -581,33 +581,45 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
                             {!isReadOnly && effectiveVlan && assignedSubs.length === 0 ? (
                               <div className="relative inline-block text-left pt-0.5">
                                 {assigningVlan === effectiveVlan ? (
-                                  <div className="flex items-center gap-1 bg-slate-50 border border-slate-300 rounded p-1 shadow-xs">
-                                    <select
-                                      className="text-[11px] p-1 bg-white border border-slate-200 rounded font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                      onChange={(e) => {
-                                        const subId = parseInt(e.target.value, 10);
-                                        const found = subscribers.find((sub) => sub.id === subId);
-                                        if (found && effectiveVlan) {
-                                          handleAssignSubscriberToVlan(found, effectiveVlan);
-                                        }
-                                      }}
-                                      defaultValue=""
-                                    >
-                                      <option value="" disabled>Select Subscriber to Assign...</option>
-                                      {subscribers.map((sub) => (
-                                        <option key={sub.id} value={sub.id}>
-                                          #{sub.id} - {displayName(sub)} {sub.vlan ? `(Current VLAN: ${sub.vlan})` : '(No VLAN assigned)'}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <button
-                                      onClick={() => setAssigningVlan(null)}
-                                      className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
-                                      title="Cancel"
-                                    >
-                                      <X className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
+                                  (() => {
+                                    const unassignedSubs = subscribers.filter(
+                                      (sub) => sub.vlan === null || sub.vlan === undefined || !sub.vlan
+                                    );
+
+                                    return (
+                                      <div className="flex items-center gap-1 bg-slate-50 border border-slate-300 rounded p-1 shadow-xs">
+                                        <select
+                                          className="text-[11px] p-1 bg-white border border-slate-200 rounded font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                          onChange={(e) => {
+                                            const subId = parseInt(e.target.value, 10);
+                                            const found = unassignedSubs.find((sub) => sub.id === subId);
+                                            if (found && effectiveVlan) {
+                                              handleAssignSubscriberToVlan(found, effectiveVlan);
+                                            }
+                                          }}
+                                          defaultValue=""
+                                        >
+                                          <option value="" disabled>
+                                            {unassignedSubs.length > 0
+                                              ? 'Select Subscriber to Assign...'
+                                              : 'No unassigned subscribers available'}
+                                          </option>
+                                          {unassignedSubs.map((sub) => (
+                                            <option key={sub.id} value={sub.id}>
+                                              #{sub.id} - {displayName(sub)}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <button
+                                          onClick={() => setAssigningVlan(null)}
+                                          className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+                                          title="Cancel"
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    );
+                                  })()
                                 ) : (
                                   <button
                                     onClick={() => setAssigningVlan(effectiveVlan!)}
