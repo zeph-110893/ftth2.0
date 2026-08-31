@@ -70,9 +70,10 @@ let wrapperInstance: SqliteWrapper | null = null;
 export async function getDb(): Promise<SqliteWrapper> {
   if (wrapperInstance) return wrapperInstance;
 
+  const dataDbPath = path.join(process.cwd(), 'data', 'ftth_database.sqlite');
   const distDbPath = path.join(process.cwd(), 'dist', 'ftth_database.sqlite');
   const rootDbPath = path.join(process.cwd(), 'ftth_database.sqlite');
-  const dbPath = process.env.DB_PATH || distDbPath;
+  const dbPath = process.env.DB_PATH || dataDbPath;
 
   // Ensure target directory exists
   const targetDir = path.dirname(dbPath);
@@ -86,6 +87,14 @@ export async function getDb(): Promise<SqliteWrapper> {
   if (fs.existsSync(dbPath)) {
     const filebuffer = fs.readFileSync(dbPath);
     db = new SQL.Database(filebuffer);
+  } else if (fs.existsSync(dataDbPath)) {
+    const filebuffer = fs.readFileSync(dataDbPath);
+    db = new SQL.Database(filebuffer);
+    fs.writeFileSync(dbPath, filebuffer);
+  } else if (fs.existsSync(distDbPath)) {
+    const filebuffer = fs.readFileSync(distDbPath);
+    db = new SQL.Database(filebuffer);
+    fs.writeFileSync(dbPath, filebuffer);
   } else if (fs.existsSync(rootDbPath)) {
     const filebuffer = fs.readFileSync(rootDbPath);
     db = new SQL.Database(filebuffer);
@@ -210,15 +219,8 @@ export async function getDb(): Promise<SqliteWrapper> {
     }
   }
 
-  // Production readiness: Clear all test data from subscribers, payments, and expenses
-  try {
-    wrapperInstance.exec('DELETE FROM payments;');
-    wrapperInstance.exec('DELETE FROM expenses;');
-    wrapperInstance.exec('DELETE FROM subscribers;');
-    wrapperInstance.save();
-  } catch (purgeErr) {
-    console.warn('Production cleanup notice:', purgeErr);
-  }
+  // Save the database file to ensure schema & initial admin exist on disk
+  wrapperInstance.save();
 
   return wrapperInstance;
 }

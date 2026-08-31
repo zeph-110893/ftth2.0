@@ -10,10 +10,11 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ftth-data:/app/dist
+      - ftth-data:/app/data
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - DB_PATH=/app/data/ftth_database.sqlite
 
 volumes:
   ftth-data:

@@ -20,13 +20,19 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV DB_PATH=/app/data/ftth_database.sqlite
+
+# Create persistent storage folder
+RUN mkdir -p /app/data
 
 # Copy built artifacts and dependencies
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
-# SQLite database file will be persisted in /app/dist or mounted volume
+# SQLite database and system state will be permanently persisted in mounted volume /app/data
+VOLUME ["/app/data"]
+
 EXPOSE 3000
 
 CMD ["node", "dist/server.cjs"]

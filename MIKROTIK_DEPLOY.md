@@ -63,7 +63,7 @@ On your MikroTik router (RouterOS v7.4+):
 
 1. **Set Environment & Mount (for persistent database storage)**:
    ```routeros
-   /container/mounts/add name=ftth_db src=disk1/ftth_data dst=/app/dist
+   /container/mounts/add name=ftth_db src=disk1/ftth_data dst=/app/data
    ```
 
 2. **Add & Start Container**:
