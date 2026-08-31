@@ -64,6 +64,8 @@ export interface MikroTikConfig {
   autoSyncOverdue: boolean;
   syncMethod: 'ppp_secret' | 'firewall_address_list' | 'simple_queue';
   syncTime?: string;
+  overdueDisconnectionTime?: string;
+  overdueDisconnectionSchedule?: string;
 }
 
 export interface MikroTikResource {

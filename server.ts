@@ -1460,6 +1460,9 @@ async function startServer() {
     try {
       const currentUser = (req as any).user;
       const cfg = saveMikrotikConfig(db, req.body);
+      
+      // Reschedule automated overdue disconnection timer based on newly saved parameters
+      rescheduleOverdueDisconnectionCron();
 
       await recordAuditLog(db, {
         userId: currentUser?.userId,
@@ -1467,7 +1470,7 @@ async function startServer() {
         userRole: currentUser?.role || 'admin',
         action: 'MIKROTIK_CONFIG_UPDATE',
         category: 'mikrotik',
-        description: `Updated MikroTik RouterOS connection parameters (Host: ${cfg.host}, User: ${cfg.username})`,
+        description: `Updated MikroTik RouterOS connection parameters (Host: ${cfg.host}, User: ${cfg.username}, Overdue Disconnect Time: ${cfg.overdueDisconnectionTime || '04:00'})`,
         ipAddress: getClientIp(req),
       });
 
@@ -1668,40 +1671,74 @@ async function startServer() {
     }
   });
 
-  // Setup Daily 4:00 AM Cron Schedule to automatically check overdues and disable VLAN interfaces
-  function schedule4AMOverdueCheck() {
-    function getMsUntilNext4AM() {
-      const now = new Date();
-      const next4AM = new Date(now);
-      next4AM.setHours(4, 0, 0, 0);
-      if (now.getTime() >= next4AM.getTime()) {
-        next4AM.setDate(next4AM.getDate() + 1);
+  // Setup Dynamic Automated Overdue Disconnection Scheduler
+  let overdueCronTimeout: NodeJS.Timeout | null = null;
+
+  function rescheduleOverdueDisconnectionCron() {
+    if (overdueCronTimeout) {
+      clearTimeout(overdueCronTimeout);
+      overdueCronTimeout = null;
+    }
+
+    try {
+      const cfg = getMikrotikConfig(db);
+      if (!cfg.autoSyncOverdue) {
+        console.log('[Automated Overdue Disconnection] Scheduler disabled in MikroTik configuration.');
+        return;
       }
-      return next4AM.getTime() - now.getTime();
-    }
 
-    function runAndReschedule() {
-      console.log('[Automated 4 AM Cron] Running scheduled daily check for overdue subscribers...');
-      checkAndDisableOverdueVlans(db)
-        .then((res) => {
-          console.log('[Automated 4 AM Cron] Successfully processed overdue VLAN interfaces:', JSON.stringify(res));
-        })
-        .catch((err) => {
-          console.error('[Automated 4 AM Cron] Error during check:', err);
-        })
-        .finally(() => {
-          const msNext = getMsUntilNext4AM();
-          console.log(`[Automated 4 AM Cron] Next execution scheduled in ${(msNext / 3600000).toFixed(2)} hours.`);
-          setTimeout(runAndReschedule, msNext);
-        });
-    }
+      const scheduleType = cfg.overdueDisconnectionSchedule || 'daily';
+      const triggerTime = cfg.overdueDisconnectionTime || '04:00'; // HH:mm
 
-    const initialMs = getMsUntilNext4AM();
-    console.log(`[Automated 4 AM Cron] Scheduler active. Next 4:00 AM check scheduled in ${(initialMs / 3600000).toFixed(2)} hours.`);
-    setTimeout(runAndReschedule, initialMs);
+      function calculateMsUntilNextRun(): number {
+        const now = new Date();
+
+        if (scheduleType === '1h') return 60 * 60 * 1000;
+        if (scheduleType === '6h') return 6 * 60 * 60 * 1000;
+        if (scheduleType === '12h') return 12 * 60 * 60 * 1000;
+        if (scheduleType === '24h') return 24 * 60 * 60 * 1000;
+
+        // Daily at triggerTime (HH:mm)
+        const parts = triggerTime.split(':');
+        const targetHour = parseInt(parts[0] || '4', 10);
+        const targetMin = parseInt(parts[1] || '0', 10);
+
+        const nextRun = new Date(now);
+        nextRun.setHours(targetHour, targetMin, 0, 0);
+
+        if (now.getTime() >= nextRun.getTime()) {
+          nextRun.setDate(nextRun.getDate() + 1);
+        }
+
+        return Math.max(1000, nextRun.getTime() - now.getTime());
+      }
+
+      function runAndScheduleNext() {
+        console.log(`[Automated Overdue Disconnection] Running scheduled overdue check (Trigger Time: ${triggerTime}, Schedule: ${scheduleType})...`);
+        checkAndDisableOverdueVlans(db)
+          .then((res) => {
+            console.log('[Automated Overdue Disconnection] Processed overdue VLAN interfaces:', JSON.stringify(res));
+          })
+          .catch((err) => {
+            console.error('[Automated Overdue Disconnection] Error during check:', err);
+          })
+          .finally(() => {
+            const nextMs = calculateMsUntilNextRun();
+            console.log(`[Automated Overdue Disconnection] Next check scheduled in ${(nextMs / 3600000).toFixed(2)} hours.`);
+            overdueCronTimeout = setTimeout(runAndScheduleNext, nextMs);
+          });
+      }
+
+      const initialMs = calculateMsUntilNextRun();
+      console.log(`[Automated Overdue Disconnection] Scheduler active. Next check scheduled in ${(initialMs / 3600000).toFixed(2)} hours (Trigger: ${triggerTime}, Schedule: ${scheduleType}).`);
+      overdueCronTimeout = setTimeout(runAndScheduleNext, initialMs);
+    } catch (e) {
+      console.error('[Automated Overdue Disconnection] Failed to configure scheduler:', e);
+    }
   }
 
-  schedule4AMOverdueCheck();
+  // Start scheduler on launch
+  rescheduleOverdueDisconnectionCron();
 
 
   // --- VITE MIDDLEWARE / PRODUCTION STATIC ---

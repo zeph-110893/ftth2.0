@@ -9,6 +9,8 @@ export interface MikroTikConfigRecord {
   autoSyncOverdue: number; // 0 or 1
   syncMethod: 'ppp_secret' | 'firewall_address_list' | 'simple_queue';
   syncTime?: string;
+  overdueDisconnectionTime?: string;
+  overdueDisconnectionSchedule?: string;
 }
 
 export function parseRouterHost(rawHost: string, currentPort: number = 443, currentUseSsl: number = 1): { host: string; port: number; useSsl: number } {
@@ -50,7 +52,9 @@ export function initMikrotikDb(db: SqliteWrapper) {
       password TEXT DEFAULT '',
       autoSyncOverdue INTEGER NOT NULL DEFAULT 1,
       syncMethod TEXT NOT NULL DEFAULT 'ppp_secret',
-      syncTime TEXT NOT NULL DEFAULT '15m'
+      syncTime TEXT NOT NULL DEFAULT '15m',
+      overdueDisconnectionTime TEXT NOT NULL DEFAULT '04:00',
+      overdueDisconnectionSchedule TEXT NOT NULL DEFAULT 'daily'
     );
   `);
 
@@ -59,12 +63,22 @@ export function initMikrotikDb(db: SqliteWrapper) {
   } catch {
     // Column might already exist
   }
+  try {
+    db.exec(`ALTER TABLE mikrotik_config ADD COLUMN overdueDisconnectionTime TEXT NOT NULL DEFAULT '04:00';`);
+  } catch {
+    // Column might already exist
+  }
+  try {
+    db.exec(`ALTER TABLE mikrotik_config ADD COLUMN overdueDisconnectionSchedule TEXT NOT NULL DEFAULT 'daily';`);
+  } catch {
+    // Column might already exist
+  }
 
   const existing = db.get<MikroTikConfigRecord>('SELECT * FROM mikrotik_config WHERE id = 1');
   if (!existing) {
     db.run(`
-      INSERT INTO mikrotik_config (id, host, port, useSsl, username, password, autoSyncOverdue, syncMethod, syncTime)
-      VALUES (1, '172.16.0.1', 443, 1, 'admin', '', 1, 'ppp_secret', '15m')
+      INSERT INTO mikrotik_config (id, host, port, useSsl, username, password, autoSyncOverdue, syncMethod, syncTime, overdueDisconnectionTime, overdueDisconnectionSchedule)
+      VALUES (1, '172.16.0.1', 443, 1, 'admin', '', 1, 'ppp_secret', '15m', '04:00', 'daily')
     `);
   } else if (existing.host === '192.168.88.1') {
     // Migrate legacy default host to 172.16.0.1:443 (HTTPS)
@@ -85,11 +99,15 @@ export function getMikrotikConfig(db: SqliteWrapper): MikroTikConfigRecord {
       autoSyncOverdue: 1,
       syncMethod: 'ppp_secret',
       syncTime: '15m',
+      overdueDisconnectionTime: '04:00',
+      overdueDisconnectionSchedule: 'daily',
     };
   }
   return {
     ...cfg,
     syncTime: cfg.syncTime || '15m',
+    overdueDisconnectionTime: cfg.overdueDisconnectionTime || '04:00',
+    overdueDisconnectionSchedule: cfg.overdueDisconnectionSchedule || 'daily',
   };
 }
 
@@ -114,7 +132,9 @@ export function saveMikrotikConfig(db: SqliteWrapper, cfg: Partial<MikroTikConfi
       password = ?,
       autoSyncOverdue = ?,
       syncMethod = ?,
-      syncTime = ?
+      syncTime = ?,
+      overdueDisconnectionTime = ?,
+      overdueDisconnectionSchedule = ?
     WHERE id = 1`,
     [
       updated.host,
@@ -125,6 +145,8 @@ export function saveMikrotikConfig(db: SqliteWrapper, cfg: Partial<MikroTikConfi
       updated.autoSyncOverdue ? 1 : 0,
       updated.syncMethod,
       updated.syncTime || '15m',
+      updated.overdueDisconnectionTime || '04:00',
+      updated.overdueDisconnectionSchedule || 'daily',
     ]
   );
   return getMikrotikConfig(db);

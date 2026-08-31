@@ -14,6 +14,11 @@ import {
   Server,
   Lock,
   Unlock,
+  Timer,
+  Play,
+  AlertCircle,
+  Zap,
+  Calendar,
 } from 'lucide-react';
 import { MikroTikConfig, MikroTikResource, MikroTikInterface, AuthUser } from '../types';
 import { authFetch, canWrite } from '../utils/auth';
@@ -36,6 +41,8 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
     autoSyncOverdue: true,
     syncMethod: 'ppp_secret',
     syncTime: '15m',
+    overdueDisconnectionTime: '04:00',
+    overdueDisconnectionSchedule: 'daily',
   });
 
   const [resource, setResource] = useState<MikroTikResource | null>(null);
@@ -43,6 +50,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
   
   const [loading, setLoading] = useState(false);
   const [syncingTime, setSyncingTime] = useState(false);
+  const [checkingOverdue, setCheckingOverdue] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   // Load config on mount
@@ -67,6 +75,8 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
           useSsl: Boolean(data.useSsl),
           autoSyncOverdue: Boolean(data.autoSyncOverdue),
           syncTime: data.syncTime || '15m',
+          overdueDisconnectionTime: data.overdueDisconnectionTime || '04:00',
+          overdueDisconnectionSchedule: data.overdueDisconnectionSchedule || 'daily',
         });
       }
     } catch (err) {
@@ -99,6 +109,63 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
     } finally {
       setSyncingTime(false);
     }
+  };
+
+  const handleRunOverdueCheckNow = async () => {
+    setCheckingOverdue(true);
+    try {
+      const res = await authFetch('/api/mikrotik/check-overdue', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        const disabledCount = (data.processed || []).filter((p: any) => p.action === 'disabled').length;
+        showNotify(
+          'success',
+          `Overdue Check Completed: Found ${data.overdueSubscribersCount || 0} overdue subscriber(s). ${disabledCount} interface action(s) executed.`
+        );
+        if (onRefreshData) {
+          await onRefreshData();
+        }
+      } else {
+        showNotify('error', data.error || 'Failed to execute overdue check.');
+      }
+    } catch (err: any) {
+      showNotify('error', err.message || 'Error running overdue disconnection check.');
+    } finally {
+      setCheckingOverdue(false);
+    }
+  };
+
+  const getNextTriggerDisplay = () => {
+    if (!config.autoSyncOverdue) return 'Disabled';
+    const schedule = config.overdueDisconnectionSchedule || 'daily';
+    const time = config.overdueDisconnectionTime || '04:00';
+
+    if (schedule !== 'daily') {
+      const map: Record<string, string> = {
+        '1h': 'Every 1 Hour',
+        '6h': 'Every 6 Hours',
+        '12h': 'Every 12 Hours',
+        '24h': 'Every 24 Hours',
+      };
+      return map[schedule] || schedule;
+    }
+
+    const [hours, minutes] = time.split(':').map(Number);
+    const now = new Date();
+    const target = new Date();
+    target.setHours(hours || 0, minutes || 0, 0, 0);
+
+    const isTomorrow = now.getTime() >= target.getTime();
+    if (isTomorrow) {
+      target.setDate(target.getDate() + 1);
+    }
+
+    const diffMs = target.getTime() - now.getTime();
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+    const timeFormatted = target.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+    return `${isTomorrow ? 'Tomorrow' : 'Today'} at ${timeFormatted} (in ${diffHours}h ${diffMins}m)`;
   };
 
   const fetchSystemInfo = async () => {
@@ -594,21 +661,139 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
               </div>
             </div>
 
-            {/* Auto-Sync Overdue Toggle */}
-            <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
-              <div>
-                <p className="text-xs font-bold text-slate-800">Automatic Overdue Disconnection Sync</p>
-                <p className="text-[11px] text-slate-500">
-                  Automatically disable interface / PPP secret when subscriber billing due date passes.
-                </p>
+            {/* Automatic Overdue Disconnection Time Trigger & Automation Engine */}
+            <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-4 space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Timer className="w-4 h-4 text-indigo-600" />
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide">
+                      Automatic Overdue Disconnection Time Trigger
+                    </h4>
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                        config.autoSyncOverdue
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-slate-100 text-slate-500 border-slate-200'
+                      }`}
+                    >
+                      {config.autoSyncOverdue ? 'Active / Automated' : 'Disabled'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Automatically checks subscriber dues and disables VLAN interfaces / PPP secrets on MikroTik when billing due dates expire.
+                  </p>
+                </div>
+
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    disabled={isReadOnly}
+                    checked={config.autoSyncOverdue}
+                    onChange={(e) => setConfig({ ...config, autoSyncOverdue: e.target.checked })}
+                    className="sr-only peer disabled:cursor-not-allowed"
+                  />
+                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
               </div>
-              <input
-                type="checkbox"
-                disabled={isReadOnly}
-                checked={config.autoSyncOverdue}
-                onChange={(e) => setConfig({ ...config, autoSyncOverdue: e.target.checked })}
-                className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer disabled:cursor-not-allowed"
-              />
+
+              {config.autoSyncOverdue && (
+                <div className="pt-3 border-t border-slate-200 space-y-3.5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                    {/* Trigger Schedule Mode */}
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                        Disconnection Trigger Schedule
+                      </label>
+                      <select
+                        value={config.overdueDisconnectionSchedule || 'daily'}
+                        onChange={(e) => setConfig({ ...config, overdueDisconnectionSchedule: e.target.value })}
+                        disabled={isReadOnly}
+                        className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-semibold bg-white cursor-pointer"
+                      >
+                        <option value="daily">Daily at Specific Time (Recommended)</option>
+                        <option value="1h">Every 1 Hour (Continuous Monitoring)</option>
+                        <option value="6h">Every 6 Hours</option>
+                        <option value="12h">Every 12 Hours</option>
+                        <option value="24h">Every 24 Hours</option>
+                      </select>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        How frequently the background worker inspects subscriber balances and due dates.
+                      </p>
+                    </div>
+
+                    {/* Specific Trigger Time */}
+                    {config.overdueDisconnectionSchedule === 'daily' || !config.overdueDisconnectionSchedule ? (
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                          Daily Disconnection Trigger Time
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="time"
+                            value={config.overdueDisconnectionTime || '04:00'}
+                            onChange={(e) => setConfig({ ...config, overdueDisconnectionTime: e.target.value })}
+                            disabled={isReadOnly}
+                            className="w-full text-xs p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono font-bold bg-white"
+                          />
+                        </div>
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {['00:00', '02:00', '04:00', '06:00', '12:00'].map((preset) => (
+                            <button
+                              key={preset}
+                              type="button"
+                              disabled={isReadOnly}
+                              onClick={() => setConfig({ ...config, overdueDisconnectionTime: preset })}
+                              className={`text-[10px] px-1.5 py-0.5 rounded border font-mono font-semibold transition-colors cursor-pointer ${
+                                config.overdueDisconnectionTime === preset
+                                  ? 'bg-indigo-600 text-white border-indigo-600'
+                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                              }`}
+                            >
+                              {preset === '04:00' ? '04:00 AM (Default)' : preset === '00:00' ? 'Midnight (00:00)' : preset}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col justify-center">
+                        <span className="text-[11px] font-bold text-slate-700 uppercase mb-1">Interval Mode Active</span>
+                        <p className="text-xs text-slate-600 bg-white p-2 border border-slate-200 rounded-lg">
+                          Checks will execute automatically every <strong className="text-indigo-600">{config.overdueDisconnectionSchedule}</strong>.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Status Banner & Manual Immediate Trigger */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-indigo-50/60 border border-indigo-100 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <div className="text-[11px] text-slate-700">
+                        <span className="font-bold text-indigo-900">Next Scheduled Trigger:</span>{' '}
+                        <span className="font-semibold text-slate-800">{getNextTriggerDisplay()}</span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleRunOverdueCheckNow}
+                      disabled={checkingOverdue || isReadOnly}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                    >
+                      <Play className={`w-3 h-3 ${checkingOverdue ? 'animate-spin' : ''}`} />
+                      <span>{checkingOverdue ? 'Executing Check...' : 'Run Disconnection Check Now'}</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-start gap-1.5 text-[10px] text-slate-500">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Safe Exclusions:</strong> Only active subscribers with an expired billing due date and unpaid balance will have their router interface disabled. Inactive accounts and paused subscriptions remain unaffected.
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
