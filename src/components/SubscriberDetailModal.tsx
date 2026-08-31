@@ -1,13 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { X, Trash2, History, CheckCircle2, Edit2, Wifi, Server, Network, Power, Loader2, AlertTriangle, Shield, Eye } from 'lucide-react';
-import { Subscriber, PaymentRecord, AccountStatus, MikroTikDhcpLease, AuthUser } from '../types';
-import { calculateSubMetrics, displayName, formatCurrency, getUnpaidMonths, TODAY, formatDueDate, getLeasesForSubscriber, parseDateSafe, getSubscriberDueDay } from '../utils/billingUtils';
+import { X, Trash2, History, CheckCircle2, Edit2, Wifi, Server, Network, Power, Loader2, AlertTriangle, Shield, Eye, ChevronDown, Check } from 'lucide-react';
+import { Subscriber, PaymentRecord, AccountStatus, MikroTikDhcpLease, MikroTikInterface, AuthUser } from '../types';
+import {
+  calculateSubMetrics,
+  displayName,
+  formatCurrency,
+  getUnpaidMonths,
+  TODAY,
+  formatDueDate,
+  getLeasesForSubscriber,
+  parseDateSafe,
+  getSubscriberDueDay,
+  getUnassignedVlans,
+  getInterfaceForSubscriber,
+} from '../utils/billingUtils';
 import { authFetch, canWrite } from '../utils/auth';
 
 interface SubscriberDetailModalProps {
   subscriber: Subscriber | null;
+  subscribers?: Subscriber[];
   payments: PaymentRecord[];
   dhcpLeases?: MikroTikDhcpLease[];
+  mikrotikInterfaces?: MikroTikInterface[];
   currentUser?: AuthUser | null;
   onClose: () => void;
   onUpdateSubscriber: (updated: Subscriber) => void;
@@ -20,8 +34,10 @@ interface SubscriberDetailModalProps {
 
 export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
   subscriber,
+  subscribers = [],
   payments,
   dhcpLeases = [],
+  mikrotikInterfaces = [],
   currentUser,
   onClose,
   onUpdateSubscriber,
@@ -35,6 +51,15 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
 
   const [selectedUnpaid, setSelectedUnpaid] = useState<string[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+
+  // State for VLAN Assignment & inline editing
+  const [isEditingVlan, setIsEditingVlan] = useState(false);
+  const [vlanSelectValue, setVlanSelectValue] = useState<string>('');
+  const [customVlanInput, setCustomVlanInput] = useState<string>('');
+  const [isCustomVlan, setIsCustomVlan] = useState<boolean>(false);
+  const [isSavingVlan, setIsSavingVlan] = useState(false);
+  const [vlanAssignMsg, setVlanAssignMsg] = useState<{ text: string; isError?: boolean } | null>(null);
+  const [showUnassignConfirm, setShowUnassignConfirm] = useState(false);
 
   // State for VLAN Interface Toggle
   const [isVlanEnabled, setIsVlanEnabled] = useState<boolean>(true);
@@ -75,6 +100,12 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
     setFirstInput(subscriber.first || '');
     setDueDayInput(subscriber.dueDay ? String(subscriber.dueDay) : '');
     setDueRawInput('');
+    setVlanSelectValue(subscriber.vlan !== null && subscriber.vlan !== undefined ? String(subscriber.vlan) : '');
+    setCustomVlanInput('');
+    setIsCustomVlan(false);
+    setIsEditingVlan(false);
+    setShowUnassignConfirm(false);
+    setVlanAssignMsg(null);
     setIsEditingRate(false);
     setIsEditingMac(false);
     setIsEditingName(false);
@@ -190,12 +221,59 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
     }
   };
 
+  const handleSaveVlanAssignment = async (targetVlanNum: number | null) => {
+    if (isReadOnly || !subscriber) return;
+    setIsSavingVlan(true);
+    setVlanAssignMsg(null);
+
+    try {
+      // 1. Enforce 1 subscriber per VLAN: unassign any other subscriber currently on this targetVlan
+      if (targetVlanNum !== null && targetVlanNum > 0 && Array.isArray(subscribers)) {
+        const existingSubsOnVlan = subscribers.filter(
+          (s) => s.id !== subscriber.id && s.vlan !== null && s.vlan !== undefined && Number(s.vlan) === Number(targetVlanNum)
+        );
+        for (const existingSub of existingSubsOnVlan) {
+          await authFetch('/api/subscribers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...existingSub, vlan: null }),
+          });
+        }
+      }
+
+      // 2. Save subscriber with new VLAN assignment
+      const updatedSub: Subscriber = {
+        ...subscriber,
+        vlan: targetVlanNum !== null && targetVlanNum > 0 ? targetVlanNum : null,
+      };
+
+      onUpdateSubscriber(updatedSub);
+      setIsEditingVlan(false);
+      setShowUnassignConfirm(false);
+      setVlanAssignMsg({
+        text: targetVlanNum !== null && targetVlanNum > 0
+          ? `Assigned VLAN ${targetVlanNum} to ${displayName(subscriber)} and synced with MikroTik RouterOS.`
+          : `Unassigned VLAN from ${displayName(subscriber)}.`,
+        isError: false,
+      });
+    } catch (err: any) {
+      setVlanAssignMsg({
+        text: err.message || 'Failed to save VLAN assignment.',
+        isError: true,
+      });
+    } finally {
+      setIsSavingVlan(false);
+    }
+  };
+
   if (!subscriber) return null;
 
   const metrics = calculateSubMetrics(subscriber, payments);
   const unpaidMonths = getUnpaidMonths(subscriber, payments);
   const nameStr = displayName(subscriber);
   const subLeases = getLeasesForSubscriber(subscriber, dhcpLeases);
+  const unassignedVlans = getUnassignedVlans(subscribers, mikrotikInterfaces, subscriber.vlan);
+  const matchedIface = getInterfaceForSubscriber(subscriber, mikrotikInterfaces);
 
   const getInitialDueDateForSub = (sub: Subscriber): string => {
     if (sub.dueRaw) {
@@ -375,12 +453,19 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                 )}
               </div>
 
-              {subscriber.vlan && (
-                <div className="flex items-center gap-2 border-l border-slate-200 pl-3">
-                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">VLAN Interface:</span>
-                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-cyan-50 text-cyan-700 border border-cyan-200 font-mono">
+              <div className="flex items-center gap-2 border-l border-slate-200 pl-3">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">VLAN:</span>
+                {subscriber.vlan ? (
+                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono">
                     VLAN-{subscriber.vlan}
                   </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
+                    Unassigned
+                  </span>
+                )}
+
+                {subscriber.vlan && (
                   <span
                     className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1.5 ${
                       isVlanEnabled
@@ -392,8 +477,8 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                     <span className={`w-1.5 h-1.5 rounded-full ${isVlanEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
                     <span>{isVlanEnabled ? 'ENABLED' : 'DISABLED'}</span>
                   </span>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
 
@@ -493,6 +578,60 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
               )}
             </div>
 
+            {/* Card 2: MONTHLY RATE (Editable) */}
+            <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">MONTHLY RATE</span>
+                {!isReadOnly && !isEditingRate && (
+                  <button
+                    onClick={() => {
+                      setRateInput(String(subscriber.rate || 600));
+                      setIsEditingRate(true);
+                    }}
+                    className="text-[10px] font-semibold text-cyan-600 hover:underline cursor-pointer flex items-center gap-0.5"
+                  >
+                    <Edit2 className="w-2.5 h-2.5" />
+                    <span>Edit</span>
+                  </button>
+                )}
+              </div>
+
+              {!isReadOnly && isEditingRate ? (
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    value={rateInput}
+                    onChange={(e) => setRateInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveRate();
+                      if (e.key === 'Escape') setIsEditingRate(false);
+                    }}
+                    placeholder="600"
+                    className="w-full text-xs font-bold text-slate-900 bg-white border border-cyan-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleSaveRate}
+                    className="px-2 py-0.5 bg-cyan-600 hover:bg-cyan-700 text-white text-[10px] font-bold rounded transition-colors cursor-pointer shrink-0"
+                  >
+                    Save
+                  </button>
+                </div>
+              ) : (
+                <div
+                  onClick={() => {
+                    if (isReadOnly) return;
+                    setRateInput(String(subscriber.rate || 600));
+                    setIsEditingRate(true);
+                  }}
+                  className={`text-xs font-bold text-slate-900 font-mono ${isReadOnly ? '' : 'cursor-pointer hover:text-cyan-600'} transition-colors`}
+                  title={isReadOnly ? undefined : 'Click to edit Monthly Rate'}
+                >
+                  {formatCurrency(subscriber.rate)}
+                </div>
+              )}
+            </div>
+
             {/* Card 3: DUE DATE (Editable - Full Month Date / Day Picker) */}
             <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3">
               <div className="flex items-center justify-between mb-1">
@@ -561,58 +700,25 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
               )}
             </div>
 
-            {/* Card 4: MONTHLY RATE (Editable) */}
+            {/* Card 4: ACCOUNT STATUS / CREATED DATE */}
             <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-3">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">MONTHLY RATE</span>
-                {!isReadOnly && !isEditingRate && (
-                  <button
-                    onClick={() => {
-                      setRateInput(String(subscriber.rate || 600));
-                      setIsEditingRate(true);
-                    }}
-                    className="text-[10px] font-semibold text-cyan-600 hover:underline cursor-pointer flex items-center gap-0.5"
-                  >
-                    <Edit2 className="w-2.5 h-2.5" />
-                    <span>Edit</span>
-                  </button>
-                )}
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">ACCOUNT STATUS</span>
               </div>
-
-              {!isReadOnly && isEditingRate ? (
-                <div className="flex items-center gap-1">
-                  <input
-                    type="number"
-                    value={rateInput}
-                    onChange={(e) => setRateInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleSaveRate();
-                      if (e.key === 'Escape') setIsEditingRate(false);
-                    }}
-                    placeholder="600"
-                    className="w-full text-xs font-bold text-slate-900 bg-white border border-cyan-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
-                    autoFocus
-                  />
-                  <button
-                    onClick={handleSaveRate}
-                    className="px-2 py-0.5 bg-cyan-600 hover:bg-cyan-700 text-white text-[10px] font-bold rounded transition-colors cursor-pointer shrink-0"
-                  >
-                    Save
-                  </button>
-                </div>
-              ) : (
-                <div
-                  onClick={() => {
-                    if (isReadOnly) return;
-                    setRateInput(String(subscriber.rate || 600));
-                    setIsEditingRate(true);
-                  }}
-                  className={`text-xs font-bold text-slate-900 font-mono ${isReadOnly ? '' : 'cursor-pointer hover:text-cyan-600'} transition-colors`}
-                  title={isReadOnly ? undefined : 'Click to edit Monthly Rate'}
+              <div className="flex items-center gap-2 mt-0.5">
+                <span
+                  className={`px-2 py-0.5 rounded-full text-xs font-bold border ${
+                    subscriber.status === 'Active'
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-slate-100 text-slate-600 border-slate-200'
+                  }`}
                 >
-                  {formatCurrency(subscriber.rate)}
-                </div>
-              )}
+                  {subscriber.status || 'Active'}
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  ID #{subscriber.id}
+                </span>
+              </div>
             </div>
 
             {/* Card 5: ONU / ROUTER MAC ADDRESS (Editable) */}
@@ -713,43 +819,243 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
             </div>
           </div>
 
-          {/* Section: ROUTEROS VLAN INTERFACE TOGGLE CONTROL */}
-          {subscriber.vlan !== null && subscriber.vlan !== undefined && (
-            <div className="bg-slate-900 text-white rounded-xl p-4 shadow-sm border border-slate-800 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg transition-colors ${isVlanEnabled ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'}`}>
-                    <Network className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                        VLAN Interface
-                      </span>
+          {/* Section: VLAN ASSIGNMENT & ROUTEROS INTERFACE CONTROL */}
+          <div className="bg-slate-900 text-white rounded-xl p-4 shadow-sm border border-slate-800 space-y-3.5">
+            {/* Header with Title & Edit / Assign VLAN button */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  <Network className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                      VLAN Assignment
+                    </span>
+                    {subscriber.vlan !== null && subscriber.vlan !== undefined && Number(subscriber.vlan) > 0 ? (
                       <span className="px-2 py-0.5 rounded text-[11px] font-extrabold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono">
                         VLAN-{subscriber.vlan}
                       </span>
-                    </div>
-                    <div className="text-[11px] text-slate-400 font-mono mt-0.5">
-                      Subnet: 172.16.{subscriber.vlan}.0/24
-                    </div>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                        Unassigned
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                    {subscriber.vlan !== null && subscriber.vlan !== undefined && Number(subscriber.vlan) > 0
+                      ? `Subnet: 172.16.${subscriber.vlan}.0/24 ${matchedIface?.name ? `• Interface: ${matchedIface.name}` : ''}`
+                      : 'No RouterOS VLAN mapped to this subscriber.'}
                   </div>
                 </div>
+              </div>
 
-                {/* Status Badge & Toggle Switch */}
-                <div className="flex items-center gap-3 ml-auto">
+              {!isReadOnly && !isEditingVlan && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVlanSelectValue(subscriber.vlan ? String(subscriber.vlan) : '');
+                    setCustomVlanInput('');
+                    setIsCustomVlan(false);
+                    setIsEditingVlan(true);
+                    setShowUnassignConfirm(false);
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                    subscriber.vlan
+                      ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                      : 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-xs'
+                  }`}
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  <span>{subscriber.vlan ? 'Change VLAN' : 'Assign VLAN'}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Inline VLAN Assignment Form (when isEditingVlan is true) */}
+            {!isReadOnly && isEditingVlan && (
+              <div className="bg-slate-950/80 rounded-xl p-3.5 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-200">
+                    {subscriber.vlan ? `Reassign VLAN for ${displayName(subscriber)}` : `Assign VLAN to ${displayName(subscriber)}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingVlan(false);
+                      setShowUnassignConfirm(false);
+                    }}
+                    className="text-slate-400 hover:text-white text-xs cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                {!showUnassignConfirm ? (
+                  <div className="space-y-2.5">
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-semibold text-slate-400">
+                        Select Available Unassigned VLAN:
+                      </label>
+                      <div className="relative">
+                        <select
+                          value={isCustomVlan ? 'custom' : vlanSelectValue}
+                          onChange={(e) => {
+                            if (e.target.value === 'custom') {
+                              setIsCustomVlan(true);
+                            } else {
+                              setIsCustomVlan(false);
+                              setVlanSelectValue(e.target.value);
+                            }
+                          }}
+                          className="w-full text-xs font-semibold py-2 pl-3 pr-8 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500 appearance-none cursor-pointer"
+                        >
+                          <option value="" disabled>-- Select an available VLAN --</option>
+                          {unassignedVlans.map((opt) => (
+                            <option key={opt.vlanId} value={String(opt.vlanId)}>
+                              VLAN {opt.vlanId} {opt.interfaceName ? `(${opt.interfaceName})` : ''} {opt.isCurrent ? '— (Currently Assigned)' : '— (Free)'}
+                            </option>
+                          ))}
+                          <option value="custom">✏️ Enter Custom VLAN ID manually...</option>
+                        </select>
+                        <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                    </div>
+
+                    {isCustomVlan && (
+                      <div className="space-y-1">
+                        <label className="block text-[11px] font-semibold text-slate-400">
+                          Custom VLAN ID (1 - 4094):
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="4094"
+                          value={customVlanInput}
+                          onChange={(e) => setCustomVlanInput(e.target.value)}
+                          placeholder="e.g. 105"
+                          className="w-full text-xs font-mono font-bold py-1.5 px-3 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                          autoFocus
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      {subscriber.vlan ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowUnassignConfirm(true)}
+                          className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 transition-colors cursor-pointer"
+                        >
+                          Unassign VLAN
+                        </button>
+                      ) : <div />}
+
+                      <div className="flex items-center gap-2 ml-auto">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsEditingVlan(false);
+                            setShowUnassignConfirm(false);
+                          }}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSavingVlan || (!isCustomVlan && !vlanSelectValue) || (isCustomVlan && !customVlanInput)}
+                          onClick={() => {
+                            const target = isCustomVlan ? parseInt(customVlanInput.trim(), 10) : parseInt(vlanSelectValue, 10);
+                            if (!isNaN(target) && target > 0) {
+                              handleSaveVlanAssignment(target);
+                            }
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
+                        >
+                          {isSavingVlan ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                          <span>Save Assignment</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg space-y-2.5">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      <div className="text-xs text-rose-200">
+                        <p className="font-bold">Confirm Unassigning VLAN {subscriber.vlan}?</p>
+                        <p className="text-[11px] text-rose-300/80 mt-0.5">
+                          This will disconnect the subscriber from VLAN {subscriber.vlan} on MikroTik RouterOS and remove interface comment synchronization.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowUnassignConfirm(false)}
+                        className="px-2.5 py-1 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 rounded cursor-pointer"
+                      >
+                        Keep VLAN
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isSavingVlan}
+                        onClick={() => handleSaveVlanAssignment(null)}
+                        className="inline-flex items-center gap-1 px-3 py-1 text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white rounded cursor-pointer disabled:opacity-50"
+                      >
+                        {isSavingVlan ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                        <span>Confirm Unassign</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* VLAN Assignment Feedback Notification */}
+            {vlanAssignMsg && (
+              <div
+                className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between transition-all ${
+                  vlanAssignMsg.isError
+                    ? 'bg-rose-500/20 text-rose-200 border border-rose-500/40'
+                    : 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40'
+                }`}
+              >
+                <span>{vlanAssignMsg.text}</span>
+                <button
+                  onClick={() => setVlanAssignMsg(null)}
+                  className="text-slate-400 hover:text-white cursor-pointer ml-2 text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* RouterOS Interface Power Switch Toggle (When VLAN is assigned) */}
+            {subscriber.vlan !== null && subscriber.vlan !== undefined && Number(subscriber.vlan) > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-800">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                    RouterOS Port State:
+                  </span>
                   <span
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 border ${
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 border ${
                       isVlanEnabled
                         ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                         : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
                     }`}
                   >
-                    <span className={`w-2 h-2 rounded-full ${isVlanEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
-                    {isVlanEnabled ? 'INTERFACE ENABLED' : 'INTERFACE DISABLED'}
+                    <span className={`w-1.5 h-1.5 rounded-full ${isVlanEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                    {isVlanEnabled ? 'ENABLED' : 'DISABLED'}
                   </span>
+                </div>
 
-                  {/* Toggle Switch Button */}
+                {/* Toggle Switch Button */}
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-slate-400">
+                    {isVlanEnabled ? 'Disable VLAN' : 'Enable VLAN'}
+                  </span>
                   <button
                     type="button"
                     disabled={isTogglingVlan || isReadOnly}
@@ -783,27 +1089,27 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                   </button>
                 </div>
               </div>
+            )}
 
-              {/* Status Banner Message */}
-              {vlanToggleMsg && (
-                <div
-                  className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between transition-all ${
-                    vlanToggleMsg.isError
-                      ? 'bg-rose-500/20 text-rose-200 border border-rose-500/40'
-                      : 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40'
-                  }`}
+            {/* Toggle status message */}
+            {vlanToggleMsg && (
+              <div
+                className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between transition-all ${
+                  vlanToggleMsg.isError
+                    ? 'bg-rose-500/20 text-rose-200 border border-rose-500/40'
+                    : 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40'
+                }`}
+              >
+                <span>{vlanToggleMsg.text}</span>
+                <button
+                  onClick={() => setVlanToggleMsg(null)}
+                  className="text-slate-400 hover:text-white cursor-pointer ml-2 text-xs"
                 >
-                  <span>{vlanToggleMsg.text}</span>
-                  <button
-                    onClick={() => setVlanToggleMsg(null)}
-                    className="text-slate-400 hover:text-white cursor-pointer ml-2 text-xs"
-                  >
-                    ✕
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+                  ✕
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Section: CONNECTED DHCP LEASES ON VLAN */}
           <div className="space-y-2">

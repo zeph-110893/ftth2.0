@@ -545,8 +545,10 @@ export default function App() {
       {/* Modals & Drawers */}
       <SubscriberDetailModal
         subscriber={selectedSubDetail}
+        subscribers={subscribers}
         payments={payments}
         dhcpLeases={dhcpLeases}
+        mikrotikInterfaces={mikrotikInterfaces}
         currentUser={currentUser}
         onClose={() => setSelectedSubDetail(null)}
         onUpdateSubscriber={handleSaveSubscriber}

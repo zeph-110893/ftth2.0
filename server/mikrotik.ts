@@ -426,8 +426,12 @@ export async function batchSyncSubscribersToRouter(db: SqliteWrapper, subscriber
   const results: Array<{ subId: number; name: string; status: string; routerAction: 'ENABLED' | 'DISABLED'; success: boolean }> = [];
 
   for (const sub of subscribers) {
-    const status = getSubscriberBillingStatusFn(sub); // 'active', 'due', 'overdue', 'inactive'
-    const shouldDisable = status === 'overdue' || status === 'inactive';
+    if (sub.status === 'Inactive') {
+      // Inactive subscribers are excluded from automatic overdue disconnection
+      continue;
+    }
+    const status = getSubscriberBillingStatusFn(sub); // 'active', 'due', 'overdue'
+    const shouldDisable = status === 'overdue';
     const name = `${sub.first} ${sub.last}`;
 
     try {
@@ -644,16 +648,7 @@ export async function checkAndDisableOverdueVlans(db: SqliteWrapper) {
 
   for (const sub of subscribers) {
     if (sub.status === 'Inactive') {
-      if (sub.vlan) {
-        await toggleVlanInterface(db, sub.vlan, true, subscribers);
-        processed.push({
-          subId: sub.id,
-          name: `${sub.first} ${sub.last}`,
-          vlan: sub.vlan,
-          action: 'DISABLED_VLAN',
-          reason: 'Subscriber status is Inactive'
-        });
-      }
+      // Inactive subscribers are excluded from overdue VLAN disabling
       continue;
     }
 

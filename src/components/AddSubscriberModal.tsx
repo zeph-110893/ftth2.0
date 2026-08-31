@@ -50,6 +50,8 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
   const [dueDate, setDueDate] = useState<string>('');
   const [status, setStatus] = useState<AccountStatus>('Active');
   const [vlan, setVlan] = useState<number | null>(null);
+  const [isCustomVlan, setIsCustomVlan] = useState<boolean>(false);
+  const [customVlanInput, setCustomVlanInput] = useState<string>('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [macAddress, setMacAddress] = useState('');
@@ -64,7 +66,10 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
       setRate(editingSubscriber.rate);
       setDueDate(getInitialDueDate(editingSubscriber));
       setStatus(editingSubscriber.status);
-      setVlan(editingSubscriber.vlan ?? null);
+      const subVlan = editingSubscriber.vlan ?? null;
+      setVlan(subVlan);
+      setCustomVlanInput(subVlan ? String(subVlan) : '');
+      setIsCustomVlan(false);
       setPhone(editingSubscriber.phone || '');
       setAddress(editingSubscriber.address || '');
       setMacAddress(editingSubscriber.macAddress || '');
@@ -75,6 +80,8 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
       setDueDate(getInitialDueDate(null));
       setStatus('Active');
       setVlan(null);
+      setCustomVlanInput('');
+      setIsCustomVlan(false);
       setPhone('');
       setAddress('');
       setMacAddress('');
@@ -97,6 +104,10 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
       }
     }
 
+    const finalVlan = isCustomVlan
+      ? (customVlanInput ? parseInt(customVlanInput.trim(), 10) : null)
+      : vlan;
+
     const newSub: Subscriber = {
       id: editingSubscriber ? editingSubscriber.id : nextId,
       first: capitalizeWords(firstName),
@@ -105,7 +116,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
       dueRaw: dueRawVal || undefined,
       dueDay: parsedDueDay,
       status,
-      vlan: vlan && vlan > 0 ? vlan : null,
+      vlan: finalVlan && finalVlan > 0 ? finalVlan : null,
       phone: phone.trim(),
       address: address.trim(),
       macAddress: macAddress.trim().toUpperCase(),
@@ -213,37 +224,64 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
             </div>
           </div>
 
-          {/* VLAN Assignment Dropdown (All Unassigned VLANs) */}
+          {/* VLAN Assignment Dropdown or Custom VLAN ID */}
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="block text-xs font-bold text-slate-700 uppercase flex items-center gap-1.5">
                 <Network className="w-3.5 h-3.5 text-indigo-600" />
-                <span>Assign VLAN (RouterOS)</span>
+                <span>Assign / Change VLAN (RouterOS)</span>
               </label>
-              <span className="text-[10px] text-indigo-600 font-medium">
-                {unassignedVlans.length} available unassigned VLANs
-              </span>
-            </div>
-            <div className="relative">
-              <select
-                value={vlan ? String(vlan) : ''}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setVlan(val ? parseInt(val, 10) : null);
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCustomVlan(!isCustomVlan);
+                  if (!isCustomVlan && vlan) {
+                    setCustomVlanInput(String(vlan));
+                  }
                 }}
-                className="w-full text-xs p-2.5 pr-8 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium appearance-none"
+                className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer underline"
               >
-                <option value="">— No VLAN Assigned (Unassigned) —</option>
-                {unassignedVlans.map((opt) => (
-                  <option key={opt.vlanId} value={opt.vlanId}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                {isCustomVlan ? 'Select from list' : 'Enter custom VLAN ID'}
+              </button>
             </div>
+
+            {isCustomVlan ? (
+              <div className="space-y-1">
+                <input
+                  type="number"
+                  min="1"
+                  max="4094"
+                  value={customVlanInput}
+                  onChange={(e) => setCustomVlanInput(e.target.value)}
+                  placeholder="e.g. 105 (1 - 4094)"
+                  className="w-full text-xs font-mono font-bold p-2.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <span className="text-[10px] text-slate-400">
+                  Enter any VLAN ID between 1 and 4094.
+                </span>
+              </div>
+            ) : (
+              <div className="relative">
+                <select
+                  value={vlan ? String(vlan) : ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setVlan(val ? parseInt(val, 10) : null);
+                  }}
+                  className="w-full text-xs p-2.5 pr-8 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium appearance-none"
+                >
+                  <option value="">— No VLAN Assigned (Unassigned) —</option>
+                  {unassignedVlans.map((opt) => (
+                    <option key={opt.vlanId} value={opt.vlanId}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            )}
             <p className="text-[10px] text-slate-400 mt-1">
-              Selecting a VLAN automatically binds this subscriber and updates the MikroTik VLAN interface description.
+              Assigning a VLAN automatically binds this subscriber and updates the MikroTik VLAN interface description.
             </p>
           </div>
 

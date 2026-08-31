@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Search, Plus, UserCheck, ArrowUpDown, ArrowUp, ArrowDown, Wifi, ShieldAlert, AlertTriangle, CheckCircle2, X, RefreshCw, Ban, Network, ChevronDown } from 'lucide-react';
+import { Search, Plus, UserCheck, ArrowUpDown, ArrowUp, ArrowDown, Wifi, ShieldAlert, AlertTriangle, CheckCircle2, X, Ban, Network, RefreshCw } from 'lucide-react';
 import { Subscriber, PaymentRecord, SubCalculatedData, MikroTikDhcpLease, MikroTikInterface, AuthUser } from '../types';
-import { calculateSubMetrics, displayName, formatCurrency, CURRENT_MONTH, abbrMonth, TODAY, getUnpaidMonths, getSubscriberBillingStatus, getSubscriberDueDay, getLeasesForSubscriber, getInterfaceForSubscriber, formatBytes, getUnassignedVlans } from '../utils/billingUtils';
+import { calculateSubMetrics, displayName, formatCurrency, CURRENT_MONTH, abbrMonth, TODAY, getUnpaidMonths, getSubscriberBillingStatus, getSubscriberDueDay, getLeasesForSubscriber, getInterfaceForSubscriber, formatBytes } from '../utils/billingUtils';
 import { authFetch, canWrite } from '../utils/auth';
 
 interface SubscribersListProps {
@@ -32,9 +32,6 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   const [vlanFilter, setVlanFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
   const [sortField, setSortField] = useState<'dueDay' | 'id' | 'name' | 'rate' | 'vlan' | 'bandwidth'>('dueDay');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-
-  // Track subscriber ID currently saving/assigning VLAN
-  const [assigningSubId, setAssigningSubId] = useState<number | null>(null);
 
   // Disable Overdue VLANs State
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -69,65 +66,12 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   const assignedVlanSubsCount = subscribers.filter((s) => s.vlan && Number(s.vlan) > 0).length;
   const unassignedVlanSubsCount = subscribers.length - assignedVlanSubsCount;
 
-  // Filter subscribers who are overdue / inactive and have an assigned VLAN
+  // Filter subscribers who are overdue and have an assigned VLAN (excluding Inactive subscribers)
   const overdueVlanSubs = subscribers.filter((sub) => {
+    if (sub.status === 'Inactive') return false;
     const status = getSubscriberBillingStatus(sub, payments);
-    return (status === 'overdue' || status === 'inactive') && sub.vlan && sub.vlan > 0;
+    return status === 'overdue' && sub.vlan && sub.vlan > 0;
   });
-
-  // Assign VLAN to User handler directly from Subscribers tab
-  const handleAssignVlanToUser = async (sub: Subscriber, targetVlan: number | null) => {
-    if (isReadOnly) return;
-    setAssigningSubId(sub.id);
-    setActionNotification(null);
-
-    try {
-      // 1. Enforce 1 subscriber per VLAN: unassign any other subscriber currently on targetVlan
-      if (targetVlan !== null && targetVlan > 0) {
-        const existingSubsOnVlan = subscribers.filter(
-          (s) => s.id !== sub.id && s.vlan !== null && s.vlan !== undefined && Number(s.vlan) === Number(targetVlan)
-        );
-        for (const existingSub of existingSubsOnVlan) {
-          await authFetch('/api/subscribers', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...existingSub, vlan: null }),
-          });
-        }
-      }
-
-      // 2. Save subscriber with new VLAN assignment
-      const updatedSub = { ...sub, vlan: targetVlan !== null && targetVlan > 0 ? targetVlan : null };
-      const res = await authFetch('/api/subscribers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedSub),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to assign VLAN to subscriber');
-      }
-
-      setActionNotification({
-        type: 'success',
-        message: targetVlan !== null && targetVlan > 0
-          ? `Assigned VLAN ${targetVlan} to ${displayName(sub)} (#${sub.id}) and synced MikroTik RouterOS comment.`
-          : `Unassigned VLAN from ${displayName(sub)} (#${sub.id}).`,
-      });
-
-      if (onRefreshData) {
-        await onRefreshData();
-      }
-    } catch (err: any) {
-      setActionNotification({
-        type: 'error',
-        message: err.message || 'Error assigning VLAN to subscriber',
-      });
-    } finally {
-      setAssigningSubId(null);
-    }
-  };
 
   const handleDisableAllOverdueVlans = async () => {
     setIsDisablingOverdue(true);
@@ -140,7 +84,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
         setActionNotification({
           type: 'success',
           message: count > 0 
-            ? `Successfully disabled VLAN interfaces for ${count} overdue/inactive subscriber${count > 1 ? 's' : ''} on MikroTik RouterOS.`
+            ? `Successfully disabled VLAN interfaces for ${count} overdue subscriber${count > 1 ? 's' : ''} on MikroTik RouterOS.`
             : 'No overdue subscribers with active VLAN interfaces needed disabling.',
           details: data.processed || [],
         });
@@ -508,105 +452,38 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                         )}
                       </td>
 
-                      {/* VLAN Assignment Column: Dropdown listing all unassigned VLANs in VLAN list */}
-                      <td
-                        className="py-3 px-3"
-                        onClick={(e) => e.stopPropagation()}
-                      >
+                      {/* VLAN Assignment Column: Clean, safe display badge (assignment managed inside Subscriber Modal) */}
+                      <td className="py-3 px-3">
                         {(() => {
-                          const isSaving = assigningSubId === sub.id;
                           const iface = getInterfaceForSubscriber(sub, mikrotikInterfaces);
                           const isAssigned = sub.vlan !== null && sub.vlan !== undefined && Number(sub.vlan) > 0;
-                          const unassignedOptions = getUnassignedVlans(subscribers, mikrotikInterfaces, sub.vlan);
 
-                          if (isSaving) {
+                          if (isAssigned) {
                             return (
-                              <div className="flex items-center gap-1.5 text-cyan-700 font-medium text-[11px]">
-                                <RefreshCw className="w-3 h-3 animate-spin text-cyan-600" />
-                                <span>Syncing...</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-mono font-bold text-xs border ${
+                                  iface?.disabled
+                                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                    : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                }`}>
+                                  <Network className="w-3.5 h-3.5 text-indigo-500" />
+                                  <span>VLAN {sub.vlan}</span>
+                                </span>
+                                {iface?.disabled ? (
+                                  <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 uppercase">
+                                    Disabled
+                                  </span>
+                                ) : iface?.running ? (
+                                  <span className="w-2 h-2 rounded-full bg-emerald-500" title="Interface Active / Running" />
+                                ) : null}
                               </div>
-                            );
-                          }
-
-                          if (isReadOnly) {
-                            return isAssigned ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono font-bold text-[11px]">
-                                VLAN {sub.vlan}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 text-[11px] italic">Unassigned</span>
                             );
                           }
 
                           return (
-                            <div className="flex items-center gap-1.5">
-                              <div className="relative inline-block min-w-[150px] max-w-[210px]">
-                                <select
-                                  value={isAssigned ? String(sub.vlan) : ''}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    if (val === '' || val === '0') {
-                                      handleAssignVlanToUser(sub, null);
-                                    } else {
-                                      handleAssignVlanToUser(sub, parseInt(val, 10));
-                                    }
-                                  }}
-                                  className={`w-full text-xs font-semibold py-1.5 pl-2.5 pr-7 rounded-lg border transition-all cursor-pointer appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
-                                    isAssigned
-                                      ? iface?.disabled
-                                        ? 'bg-amber-50 text-amber-900 border-amber-300 font-mono'
-                                        : 'bg-indigo-50/90 text-indigo-900 border-indigo-200 hover:border-indigo-300 font-mono shadow-2xs'
-                                      : 'bg-slate-50 hover:bg-white text-slate-600 border-slate-200 hover:border-indigo-300 border-dashed font-sans shadow-2xs'
-                                  }`}
-                                >
-                                  {!isAssigned && (
-                                    <option value="" disabled>
-                                      {unassignedOptions.length > 0
-                                        ? `+ Assign VLAN (${unassignedOptions.length} free)...`
-                                        : 'No unassigned VLANs'}
-                                    </option>
-                                  )}
-
-                                  {isAssigned && (
-                                    <option value={String(sub.vlan)}>
-                                      VLAN {sub.vlan} {iface?.name ? `(${iface.name})` : ''} ✓
-                                    </option>
-                                  )}
-
-                                  <optgroup label="Available Unassigned VLANs">
-                                    {unassignedOptions
-                                      .filter((opt) => !isAssigned || opt.vlanId !== Number(sub.vlan))
-                                      .map((opt) => (
-                                        <option key={opt.vlanId} value={opt.vlanId}>
-                                          VLAN {opt.vlanId} {opt.interfaceName ? `(${opt.interfaceName})` : ''}
-                                        </option>
-                                      ))}
-                                  </optgroup>
-
-                                  {isAssigned && (
-                                    <optgroup label="Action">
-                                      <option value="0">✕ Unassign VLAN (None)</option>
-                                    </optgroup>
-                                  )}
-                                </select>
-
-                                <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                              </div>
-
-                              {isAssigned && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleAssignVlanToUser(sub, null);
-                                  }}
-                                  title="Unassign VLAN from this subscriber"
-                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer shrink-0"
-                                >
-                                  <X className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </div>
+                            <span className="text-slate-400 text-xs italic">
+                              Unassigned
+                            </span>
                           );
                         })()}
                       </td>
@@ -727,7 +604,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                 <div>
                   <p className="font-semibold">Confirm RouterOS Action</p>
                   <p className="text-amber-800 text-[11px] mt-0.5">
-                    This action will connect to the MikroTik router and automatically disable the VLAN interface for all subscribers who have overdue unpaid balances or inactive statuses.
+                    This action will connect to the MikroTik router and automatically disable the VLAN interface for all active subscribers who have overdue unpaid balances (inactive subscribers are excluded).
                   </p>
                 </div>
               </div>
