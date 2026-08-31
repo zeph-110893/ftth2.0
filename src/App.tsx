@@ -527,8 +527,6 @@ export default function App() {
 
             {currentTab === 'mikrotik' && isAdmin(currentUser) && (
               <MikroTikManager
-                subscribers={subscribers}
-                payments={payments}
                 currentUser={currentUser}
                 onRefreshData={fetchData}
               />
@@ -565,6 +563,8 @@ export default function App() {
       <AddSubscriberModal
         isOpen={isAddSubOpen}
         editingSubscriber={editingSub}
+        subscribers={subscribers}
+        mikrotikInterfaces={mikrotikInterfaces}
         onClose={() => {
           setIsAddSubOpen(false);
           setEditingSub(null);

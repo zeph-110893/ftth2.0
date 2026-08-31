@@ -290,11 +290,13 @@ export function getLeasesForSubscriber(sub: Subscriber, leases: MikroTikDhcpLeas
 }
 
 export function formatBytes(bytes?: number): string {
-  if (!bytes || bytes === 0) return '0 B';
+  if (!bytes || bytes === 0 || isNaN(bytes)) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  if (i < 0) return '0 B';
+  const val = bytes / Math.pow(k, i);
+  return (val >= 100 ? val.toFixed(1) : val.toFixed(2)) + ' ' + sizes[i];
 }
 
 export function getInterfaceForSubscriber(sub: Subscriber, interfaces: MikroTikInterface[] = []): MikroTikInterface | undefined {
@@ -326,3 +328,156 @@ export function getInterfaceForSubscriber(sub: Subscriber, interfaces: MikroTikI
     );
   });
 }
+
+export function getDhcpLeasesForSubscriber(
+  sub: Subscriber,
+  leases: MikroTikDhcpLease[] = []
+): MikroTikDhcpLease[] {
+  if (!sub || !Array.isArray(leases) || leases.length === 0) return [];
+  const subVlan = sub.vlan !== null && sub.vlan !== undefined && !isNaN(Number(sub.vlan)) && Number(sub.vlan) > 0 ? Number(sub.vlan) : null;
+  const subMac = sub.macAddress ? sub.macAddress.trim().toLowerCase() : null;
+  const subLast = sub.last ? sub.last.trim().toLowerCase() : null;
+  const subIdStr = `#${sub.id}`;
+
+  return leases.filter((lease) => {
+    // Match by MAC
+    if (subMac && lease.macAddress && lease.macAddress.trim().toLowerCase() === subMac) {
+      return true;
+    }
+    // Match by VLAN in server name or IP subnet
+    if (subVlan !== null) {
+      const serverLower = (lease.server || '').toLowerCase();
+      if (
+        serverLower.includes(`vlan${subVlan}`) ||
+        serverLower.includes(`vlan-${subVlan}`) ||
+        serverLower.includes(`vlan_${subVlan}`) ||
+        serverLower === `dhcp${subVlan}` ||
+        serverLower === `dhcp_${subVlan}`
+      ) {
+        return true;
+      }
+      if (
+        lease.address &&
+        (lease.address.startsWith(`192.168.${subVlan}.`) ||
+          lease.address.startsWith(`172.16.${subVlan}.`) ||
+          lease.address.startsWith(`10.0.${subVlan}.`) ||
+          lease.address.includes(`.${subVlan}.`))
+      ) {
+        return true;
+      }
+    }
+    // Match by comment
+    if (lease.comment) {
+      const commentLower = lease.comment.toLowerCase();
+      if (commentLower.includes(subIdStr.toLowerCase()) || commentLower.includes(`sub_${sub.id}`)) {
+        return true;
+      }
+      if (subLast && subLast.length >= 3 && commentLower.includes(subLast)) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+export interface AvailableVlanOption {
+  vlanId: number;
+  label: string;
+  interfaceName?: string;
+  comment?: string;
+  isCurrent?: boolean;
+}
+
+/**
+ * Extracts and returns all unique unassigned VLANs available to be assigned to a subscriber.
+ * @param subscribers List of all subscribers
+ * @param interfaces List of MikroTik interfaces
+ * @param currentSubVlan Optional current VLAN ID of the subscriber being edited (to include as an option)
+ */
+export function getUnassignedVlans(
+  subscribers: Subscriber[] = [],
+  interfaces: MikroTikInterface[] = [],
+  currentSubVlan?: number | null
+): AvailableVlanOption[] {
+  const allVlanIds = new Set<number>();
+  const vlanInterfaceMap = new Map<number, MikroTikInterface>();
+
+  // 1. Gather all VLANs from MikroTik interfaces
+  if (Array.isArray(interfaces)) {
+    interfaces.forEach((iface) => {
+      let vlanId = iface.vlanId;
+      if (!vlanId && iface.name) {
+        const match = iface.name.match(/vlan[-_\.\s]*(\d+)/i) || iface.name.match(/(\d+)/);
+        if (match && (iface.type === 'vlan' || iface.name.toLowerCase().includes('vlan'))) {
+          vlanId = parseInt(match[1], 10);
+        }
+      }
+      if (vlanId !== undefined && !isNaN(Number(vlanId)) && Number(vlanId) > 0) {
+        const numId = Number(vlanId);
+        allVlanIds.add(numId);
+        if (!vlanInterfaceMap.has(numId)) {
+          vlanInterfaceMap.set(numId, iface);
+        }
+      }
+    });
+  }
+
+  // 2. Gather any VLANs already assigned to subscribers
+  if (Array.isArray(subscribers)) {
+    subscribers.forEach((s) => {
+      if (s.vlan !== null && s.vlan !== undefined && !isNaN(Number(s.vlan)) && Number(s.vlan) > 0) {
+        allVlanIds.add(Number(s.vlan));
+      }
+    });
+  }
+
+  // 3. If there are few or no VLANs detected (e.g. offline router or default range), seed standard VLAN range 101-150
+  if (allVlanIds.size < 10) {
+    for (let v = 101; v <= 150; v++) {
+      allVlanIds.add(v);
+    }
+  }
+
+  // 4. Map currently occupied VLANs to other subscribers
+  const currentSubVlanNum = currentSubVlan !== null && currentSubVlan !== undefined && !isNaN(Number(currentSubVlan))
+    ? Number(currentSubVlan)
+    : null;
+
+  const assignedVlanSet = new Set<number>();
+  subscribers.forEach((s) => {
+    if (s.vlan !== null && s.vlan !== undefined && !isNaN(Number(s.vlan)) && Number(s.vlan) > 0) {
+      const v = Number(s.vlan);
+      if (v !== currentSubVlanNum) {
+        assignedVlanSet.add(v);
+      }
+    }
+  });
+
+  // 5. Build available list
+  const availableList: AvailableVlanOption[] = [];
+  const sortedVlanIds = Array.from(allVlanIds).sort((a, b) => a - b);
+
+  for (const vlanId of sortedVlanIds) {
+    const isCurrent = currentSubVlanNum !== null && vlanId === currentSubVlanNum;
+    const isAssignedToOther = assignedVlanSet.has(vlanId);
+
+    if (!isAssignedToOther || isCurrent) {
+      const iface = vlanInterfaceMap.get(vlanId);
+      const ifaceName = iface?.name || `vlan-${vlanId}`;
+      const label = isCurrent
+        ? `VLAN ${vlanId} (${ifaceName}) — Currently Assigned`
+        : `VLAN ${vlanId} (${ifaceName})`;
+
+      availableList.push({
+        vlanId,
+        label,
+        interfaceName: iface?.name,
+        comment: iface?.comment,
+        isCurrent,
+      });
+    }
+  }
+
+  return availableList;
+}
+

@@ -1,45 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import {
   Router,
-  Zap,
   RefreshCw,
   CheckCircle2,
-  XCircle,
   AlertTriangle,
   Cpu,
   HardDrive,
   Clock,
   Settings,
   ShieldCheck,
-  Radio,
   Check,
-  Activity,
   Layers,
-  Network,
   Server,
   Lock,
   Unlock,
-  Shield,
-  Globe,
-  UserPlus,
-  X,
-  User,
-  Tag,
 } from 'lucide-react';
-import { Subscriber, PaymentRecord, MikroTikConfig, MikroTikResource, MikroTikInterface, MikroTikDhcpLease, AuthUser } from '../types';
-import { getSubscriberBillingStatus, displayName } from '../utils/billingUtils';
+import { MikroTikConfig, MikroTikResource, MikroTikInterface, AuthUser } from '../types';
 import { authFetch, canWrite } from '../utils/auth';
 
 interface MikroTikManagerProps {
-  subscribers: Subscriber[];
-  payments: PaymentRecord[];
   currentUser?: AuthUser | null;
   onRefreshData?: () => void | Promise<void>;
 }
 
-export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, payments, currentUser, onRefreshData }) => {
+export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, onRefreshData }) => {
   const isReadOnly = !canWrite(currentUser);
-  const [activeTab, setActiveTab] = useState<'interfaces' | 'resources' | 'dhcp' | 'settings'>('interfaces');
+  const [activeTab, setActiveTab] = useState<'resources' | 'settings'>('resources');
   
   const [config, setConfig] = useState<MikroTikConfig>({
     host: '172.16.0.1',
@@ -54,99 +40,16 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
 
   const [resource, setResource] = useState<MikroTikResource | null>(null);
   const [interfaces, setInterfaces] = useState<MikroTikInterface[]>([]);
-  const [leases, setLeases] = useState<MikroTikDhcpLease[]>([]);
   
   const [loading, setLoading] = useState(false);
   const [syncingTime, setSyncingTime] = useState(false);
-  const [syncingComments, setSyncingComments] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
-  const [assigningVlan, setAssigningVlan] = useState<number | null>(null);
-
-  const handleAssignSubscriberToVlan = async (sub: Subscriber, targetVlan: number) => {
-    try {
-      // Enforce 1 subscriber per VLAN: unassign any other subscriber currently on this targetVlan
-      const existingSubsOnVlan = subscribers.filter(
-        (s) => s.id !== sub.id && s.vlan !== null && s.vlan !== undefined && Number(s.vlan) === Number(targetVlan)
-      );
-
-      for (const existingSub of existingSubsOnVlan) {
-        await authFetch('/api/subscribers', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...existingSub, vlan: null }),
-        });
-      }
-
-      const updatedSub = { ...sub, vlan: targetVlan };
-      const res = await authFetch('/api/subscribers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedSub),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to assign subscriber to VLAN');
-      }
-
-      showNotify('success', `Assigned ${displayName(sub)} (#${sub.id}) to VLAN ${targetVlan} and updated RouterOS interface comment.`);
-      setAssigningVlan(null);
-      if (onRefreshData) {
-        await onRefreshData();
-      }
-      await fetchTabDetails('interfaces');
-    } catch (err: any) {
-      showNotify('error', err.message || 'Error assigning subscriber to VLAN');
-    }
-  };
-
-  const handleUnassignSubscriberFromVlan = async (sub: Subscriber) => {
-    try {
-      const updatedSub = { ...sub, vlan: 0 };
-      const res = await authFetch('/api/subscribers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedSub),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to unassign subscriber');
-      }
-
-      showNotify('info', `Unassigned ${displayName(sub)} (#${sub.id}) from VLAN.`);
-      if (onRefreshData) {
-        await onRefreshData();
-      }
-      await fetchTabDetails('interfaces');
-    } catch (err: any) {
-      showNotify('error', err.message || 'Error unassigning subscriber');
-    }
-  };
-
-  const handleSyncAllComments = async () => {
-    setSyncingComments(true);
-    try {
-      const res = await authFetch('/api/mikrotik/sync-vlan-comments', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showNotify('success', `Synced subscriber full names to ${data.totalSynced || 0} MikroTik VLAN interface comments!`);
-        await fetchTabDetails('interfaces');
-      } else {
-        showNotify('error', data.error || 'Failed to sync VLAN interface comments.');
-      }
-    } catch (err: any) {
-      showNotify('error', err.message || 'Error syncing comments to RouterOS');
-    } finally {
-      setSyncingComments(false);
-    }
-  };
 
   // Load config on mount
   useEffect(() => {
     fetchConfig();
     fetchSystemInfo();
-    fetchTabDetails('interfaces');
+    fetchInterfaces();
   }, []);
 
   const showNotify = (type: 'success' | 'error' | 'info', message: string) => {
@@ -168,6 +71,16 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
       }
     } catch (err) {
       console.error('Failed to load MikroTik config:', err);
+    }
+  };
+
+  const fetchInterfaces = async () => {
+    try {
+      const resIfaces = await authFetch('/api/mikrotik/interfaces');
+      const dataIfaces = await resIfaces.json();
+      if (dataIfaces.success) setInterfaces(dataIfaces.interfaces || []);
+    } catch (err) {
+      console.error('Failed to fetch MikroTik interfaces:', err);
     }
   };
 
@@ -205,30 +118,6 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
     }
   };
 
-  const fetchTabDetails = async (tab: string) => {
-    if (tab === 'interfaces') {
-      try {
-        const res = await authFetch('/api/mikrotik/interfaces');
-        const data = await res.json();
-        if (data.success) setInterfaces(data.interfaces || []);
-      } catch (err) {
-        console.error(err);
-      }
-    } else if (tab === 'dhcp') {
-      try {
-        const res = await authFetch('/api/mikrotik/leases');
-        const data = await res.json();
-        if (data.success) setLeases(data.leases || []);
-      } catch (err) {
-        console.error(err);
-      }
-    }
-  };
-
-  useEffect(() => {
-    fetchTabDetails(activeTab);
-  }, [activeTab]);
-
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -242,7 +131,10 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
       if (data.success) {
         showNotify('success', 'MikroTik connection settings saved!');
         fetchSystemInfo();
-        fetchTabDetails(activeTab);
+        fetchInterfaces();
+        if (onRefreshData) {
+          await onRefreshData();
+        }
       } else {
         showNotify('error', data.error || 'Failed to save settings.');
       }
@@ -251,14 +143,6 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
     } finally {
       setLoading(false);
     }
-  };
-
-  const formatBytes = (bytes?: number) => {
-    if (!bytes || bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
   return (
@@ -316,7 +200,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
             <button
               onClick={() => {
                 fetchSystemInfo();
-                fetchTabDetails(activeTab);
+                fetchInterfaces();
               }}
               disabled={loading}
               className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs transition-all flex items-center gap-2 cursor-pointer"
@@ -403,16 +287,6 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
       {/* Navigation Tabs */}
       <div className="bg-white border border-slate-200 rounded-xl p-1.5 flex flex-wrap gap-1 shadow-sm">
         <button
-          onClick={() => setActiveTab('interfaces')}
-          className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
-            activeTab === 'interfaces' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Layers className="w-4 h-4" />
-          <span>VLAN</span>
-        </button>
-
-        <button
           onClick={() => setActiveTab('resources')}
           className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
             activeTab === 'resources' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
@@ -420,16 +294,6 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
         >
           <Server className="w-4 h-4" />
           <span>System Hardware Specs</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('dhcp')}
-          className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
-            activeTab === 'dhcp' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Radio className="w-4 h-4" />
-          <span>DHCP Leases</span>
         </button>
 
         <button
@@ -443,227 +307,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
         </button>
       </div>
 
-      {/* Tab 1: Bridge & VLAN Interfaces (e.g. vlan-101) */}
-      {activeTab === 'interfaces' && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-            <div>
-              <h2 className="text-base font-bold text-slate-900">VLAN Interfaces & Subscribers</h2>
-              <p className="text-xs text-slate-500">
-                MikroTik VLAN interfaces, bandwidth traffic statistics, and subscriber VLAN assignments.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
-              {!isReadOnly && (
-                <button
-                  onClick={handleSyncAllComments}
-                  disabled={syncingComments}
-                  title="Sync subscriber full names directly to MikroTik VLAN interface comments"
-                  className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                >
-                  <Tag className={`w-3.5 h-3.5 text-indigo-600 ${syncingComments ? 'animate-spin' : ''}`} />
-                  <span>{syncingComments ? 'Syncing Comments...' : 'Sync Names to MikroTik Comments'}</span>
-                </button>
-              )}
-              <button
-                onClick={() => fetchTabDetails('interfaces')}
-                className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Refresh Interfaces</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold tracking-wider">
-                <tr>
-                  <th className="py-3 px-4">Interface Name</th>
-                  <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">VLAN ID</th>
-                  <th className="py-3 px-4">Subscribers Assigned</th>
-                  <th className="py-3 px-4 text-right">Rx / Tx Traffic</th>
-                  <th className="py-3 px-4 text-right">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
-                {(() => {
-                  const vlanInterfaces = interfaces.filter((iface) => {
-                    const name = (iface.name || '').toLowerCase();
-                    const type = (iface.type || '').toLowerCase();
-                    const comment = (iface.comment || '').toLowerCase();
-                    return name.includes('vlan') || type.includes('vlan') || comment.includes('vlan') || iface.vlanId !== undefined;
-                  });
-
-                  if (vlanInterfaces.length === 0) {
-                    return (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-400 text-xs">
-                          No interfaces containing the word "vlan" found on MikroTik router.
-                        </td>
-                      </tr>
-                    );
-                  }
-
-                  return vlanInterfaces.map((iface, idx) => {
-                    let effectiveVlan = iface.vlanId;
-                    if (!effectiveVlan && iface.name) {
-                      const match = iface.name.match(/vlan[-_\.\s]*(\d+)/i) || iface.name.match(/(\d+)/);
-                      if (match) {
-                        effectiveVlan = parseInt(match[1], 10);
-                      }
-                    }
-
-                    const assignedSubs = subscribers.filter((s) => {
-                      if (s.vlan === null || s.vlan === undefined || Number.isNaN(Number(s.vlan))) return false;
-                      if (effectiveVlan !== undefined && Number(s.vlan) === Number(effectiveVlan)) return true;
-                      const sVlanStr = String(s.vlan).trim();
-                      if (!sVlanStr) return false;
-                      const nameLower = (iface.name || '').toLowerCase();
-                      const commentLower = (iface.comment || '').toLowerCase();
-                      return (
-                        nameLower.includes(`vlan-${sVlanStr}`) ||
-                        nameLower.includes(`vlan_${sVlanStr}`) ||
-                        nameLower.includes(`vlan${sVlanStr}`) ||
-                        commentLower.includes(`vlan ${sVlanStr}`) ||
-                        commentLower.includes(`vlan-${sVlanStr}`)
-                      );
-                    });
-
-                    return (
-                      <tr key={iface.id || idx} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-3 px-4 font-mono font-bold text-indigo-950 flex items-center gap-2">
-                          <Network className="w-4 h-4 text-indigo-500" />
-                          <span>{iface.name}</span>
-                        </td>
-                        <td className="py-3 px-4 uppercase text-[11px] font-bold text-slate-600">
-                          <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200">
-                            {iface.type}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 font-mono">
-                          {effectiveVlan ? (
-                            <span className="px-2.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-bold">
-                              VLAN {effectiveVlan}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4">
-                          <div className="flex flex-col gap-1.5">
-                            {assignedSubs.length > 0 ? (
-                              <div className="flex flex-wrap gap-1">
-                                {assignedSubs.map((s) => (
-                                  <span
-                                    key={s.id}
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-semibold"
-                                  >
-                                    <span>{displayName(s)}</span>
-                                    <span className="text-[9px] text-emerald-600 font-mono">(ID #{s.id})</span>
-                                    {!isReadOnly && (
-                                      <button
-                                        onClick={() => handleUnassignSubscriberFromVlan(s)}
-                                        title="Unassign subscriber from VLAN"
-                                        className="ml-0.5 text-emerald-600 hover:text-rose-600 hover:bg-emerald-100 rounded-full p-0.5 cursor-pointer transition-colors"
-                                      >
-                                        <X className="w-2.5 h-2.5" />
-                                      </button>
-                                    )}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-slate-400 text-[11px] italic">No subscriber assigned</span>
-                            )}
-
-                            {!isReadOnly && effectiveVlan && assignedSubs.length === 0 ? (
-                              <div className="relative inline-block text-left pt-0.5">
-                                {assigningVlan === effectiveVlan ? (
-                                  (() => {
-                                    const unassignedSubs = subscribers.filter(
-                                      (sub) => sub.vlan === null || sub.vlan === undefined || !sub.vlan
-                                    );
-
-                                    return (
-                                      <div className="flex items-center gap-1 bg-slate-50 border border-slate-300 rounded p-1 shadow-xs">
-                                        <select
-                                          className="text-[11px] p-1 bg-white border border-slate-200 rounded font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                          onChange={(e) => {
-                                            const subId = parseInt(e.target.value, 10);
-                                            const found = unassignedSubs.find((sub) => sub.id === subId);
-                                            if (found && effectiveVlan) {
-                                              handleAssignSubscriberToVlan(found, effectiveVlan);
-                                            }
-                                          }}
-                                          defaultValue=""
-                                        >
-                                          <option value="" disabled>
-                                            {unassignedSubs.length > 0
-                                              ? 'Select Subscriber to Assign...'
-                                              : 'No unassigned subscribers available'}
-                                          </option>
-                                          {unassignedSubs.map((sub) => (
-                                            <option key={sub.id} value={sub.id}>
-                                              #{sub.id} - {displayName(sub)}
-                                            </option>
-                                          ))}
-                                        </select>
-                                        <button
-                                          onClick={() => setAssigningVlan(null)}
-                                          className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
-                                          title="Cancel"
-                                        >
-                                          <X className="w-3.5 h-3.5" />
-                                        </button>
-                                      </div>
-                                    );
-                                  })()
-                                ) : (
-                                  <button
-                                    onClick={() => setAssigningVlan(effectiveVlan!)}
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 cursor-pointer transition-colors"
-                                  >
-                                    <UserPlus className="w-3 h-3" />
-                                    <span>+ Assign Subscriber</span>
-                                  </button>
-                                )}
-                              </div>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono text-[11px]">
-                          <span className="text-emerald-600 font-bold">↓ {formatBytes(iface.rxByte)}</span>
-                          <span className="text-slate-300 mx-1.5">|</span>
-                          <span className="text-indigo-600 font-bold">↑ {formatBytes(iface.txByte)}</span>
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          {iface.disabled ? (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                              DISABLED
-                            </span>
-                          ) : iface.running ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> RUNNING
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                              LINK DOWN
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  });
-                })()}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 2: System Hardware Specs */}
+      {/* Tab 1: System Hardware Specs */}
       {activeTab === 'resources' && (
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
           <div className="pb-4 border-b border-slate-100">
@@ -711,53 +355,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ subscribers, p
         </div>
       )}
 
-      {/* Tab 3: DHCP Leases */}
-      {activeTab === 'dhcp' && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-            <div>
-              <h2 className="text-base font-bold text-slate-900">DHCP Server Leases</h2>
-              <p className="text-xs text-slate-500">IP address reservations and bound clients on RouterOS.</p>
-            </div>
-            <button
-              onClick={() => fetchTabDetails('dhcp')}
-              className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1 cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Refresh Leases</span>
-            </button>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold">
-                <tr>
-                  <th className="py-2.5 px-3">IP Address</th>
-                  <th className="py-2.5 px-3">Host Name</th>
-                  <th className="py-2.5 px-3">DHCP Server</th>
-                  <th className="py-2.5 px-3 text-right">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {leases.map((l, idx) => (
-                  <tr key={l.id || idx} className="hover:bg-slate-50">
-                    <td className="py-2.5 px-3 font-mono font-bold text-slate-900">{l.address}</td>
-                    <td className="py-2.5 px-3 text-slate-800 font-semibold">{l.hostName || '—'}</td>
-                    <td className="py-2.5 px-3 text-slate-500">{l.server}</td>
-                    <td className="py-2.5 px-3 text-right">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 uppercase">
-                        {l.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 4: Router Connection Settings */}
+      {/* Tab 2: Router Connection Settings */}
       {activeTab === 'settings' && (
         <form onSubmit={handleSaveConfig} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
           <div className="pb-4 border-b border-slate-100">
