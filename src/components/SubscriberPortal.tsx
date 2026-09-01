@@ -140,6 +140,13 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
             Payment Due Soon
           </span>
         );
+      case 'exclude':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-purple-500/10 text-purple-600 border border-purple-500/20 text-xs font-bold rounded-full">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            Special / Exempt
+          </span>
+        );
       case 'overdue':
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-500/10 text-rose-600 border border-rose-500/20 text-xs font-bold rounded-full">

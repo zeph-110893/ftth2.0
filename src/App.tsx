@@ -235,23 +235,25 @@ export default function App() {
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
-  // Computed metrics for counts
-  const overdueCount = subscribers.filter((sub) => {
+  // Computed metrics for counts (excluding Exclude status)
+  const nonExcludedSubscribers = subscribers.filter((sub) => sub.status !== 'Exclude');
+
+  const overdueCount = nonExcludedSubscribers.filter((sub) => {
     const m = calculateSubMetrics(sub, payments, CURRENT_MONTH);
     return m.statusPill === 'overdue';
   }).length;
 
-  const dueCount = subscribers.filter((sub) => {
+  const dueCount = nonExcludedSubscribers.filter((sub) => {
     const m = calculateSubMetrics(sub, payments, CURRENT_MONTH);
     return m.statusPill === 'due';
   }).length;
 
-  const activeCount = subscribers.filter((sub) => {
+  const activeCount = nonExcludedSubscribers.filter((sub) => {
     const m = calculateSubMetrics(sub, payments, CURRENT_MONTH);
     return m.statusPill === 'active';
   }).length;
 
-  const totalUnpaidAmount = subscribers.reduce((acc, sub) => {
+  const totalUnpaidAmount = nonExcludedSubscribers.reduce((acc, sub) => {
     const m = calculateSubMetrics(sub, payments, CURRENT_MONTH);
     return acc + m.missed * m.rate;
   }, 0);
@@ -444,7 +446,7 @@ export default function App() {
           await handleLogout();
           navigateToAdmin();
         }}
-        totalSubsCount={subscribers.length}
+        totalSubsCount={nonExcludedSubscribers.length}
         activeCount={activeCount}
         dueCount={dueCount}
         overdueCount={overdueCount}

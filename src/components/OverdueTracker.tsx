@@ -31,8 +31,8 @@ export const OverdueTracker: React.FC<OverdueTrackerProps> = ({
       };
     })
     .filter(({ sub, metrics, unpaidMonths }) => {
-      // Avoid subscribers who have paid for the same/current month or have 0 unpaid months
-      return sub.status !== 'Inactive' && unpaidMonths.length > 0 && metrics.statusPill === 'overdue';
+      // Avoid subscribers who are Inactive/Exclude, or have paid for the same/current month or have 0 unpaid months
+      return sub.status !== 'Inactive' && sub.status !== 'Exclude' && unpaidMonths.length > 0 && metrics.statusPill === 'overdue';
     })
     .sort((a, b) => b.unpaidMonths.length - a.unpaidMonths.length);
 

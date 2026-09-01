@@ -27,7 +27,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
 }) => {
   const isReadOnly = !canWrite(currentUser);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'active' | 'due' | 'overdue' | 'inactive' | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<'active' | 'due' | 'overdue' | 'inactive' | 'exclude' | 'all'>('all');
   const [paymentFilter, setPaymentFilter] = useState<'all' | 'paid' | 'unpaid'>('all');
   const [vlanFilter, setVlanFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
   const [sortField, setSortField] = useState<'dueDay' | 'id' | 'name' | 'rate' | 'vlan' | 'bandwidth'>('dueDay');
@@ -62,13 +62,14 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   const dueSubsCount = subscribers.filter((s) => getSubscriberBillingStatus(s, payments) === 'due').length;
   const overdueSubsCount = subscribers.filter((s) => getSubscriberBillingStatus(s, payments) === 'overdue').length;
   const inactiveSubsCount = subscribers.filter((s) => getSubscriberBillingStatus(s, payments) === 'inactive').length;
+  const excludedSubsCount = subscribers.filter((s) => getSubscriberBillingStatus(s, payments) === 'exclude').length;
 
   const assignedVlanSubsCount = subscribers.filter((s) => s.vlan && Number(s.vlan) > 0).length;
   const unassignedVlanSubsCount = subscribers.length - assignedVlanSubsCount;
 
-  // Filter subscribers who are overdue and have an assigned VLAN (excluding Inactive subscribers)
+  // Filter subscribers who are overdue and have an assigned VLAN (excluding Inactive and Excluded subscribers)
   const overdueVlanSubs = subscribers.filter((sub) => {
-    if (sub.status === 'Inactive') return false;
+    if (sub.status === 'Inactive' || sub.status === 'Exclude') return false;
     const status = getSubscriberBillingStatus(sub, payments);
     return status === 'overdue' && sub.vlan && sub.vlan > 0;
   });
@@ -131,6 +132,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
     if (statusFilter === 'due' && billingStatus !== 'due') return false;
     if (statusFilter === 'overdue' && billingStatus !== 'overdue') return false;
     if (statusFilter === 'inactive' && billingStatus !== 'inactive') return false;
+    if (statusFilter === 'exclude' && billingStatus !== 'exclude') return false;
 
     if (paymentFilter === 'paid' && unpaidCount > 0) return false;
     if (paymentFilter === 'unpaid' && unpaidCount === 0) return false;
@@ -224,6 +226,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
               <option value="due">Due ({dueSubsCount})</option>
               <option value="overdue">Overdue ({overdueSubsCount})</option>
               <option value="inactive">Inactive ({inactiveSubsCount})</option>
+              <option value="exclude">Exclude ({excludedSubsCount})</option>
             </select>
           </div>
 
@@ -427,9 +430,14 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                         </div>
                       </td>
 
-                      {/* Status Pill (Active / Due / Overdue / Inactive) */}
+                      {/* Status Pill (Active / Due / Overdue / Inactive / Exclude) */}
                       <td className="py-3 px-3">
-                        {billingStatus === 'inactive' ? (
+                        {billingStatus === 'exclude' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-purple-50 text-purple-700 border border-purple-200 uppercase tracking-wider" title="Excluded from subscriber counts, auto-disconnections, and gross revenue metrics">
+                            <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                            Exclude
+                          </span>
+                        ) : billingStatus === 'inactive' ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 uppercase tracking-wider">
                             <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
                             Inactive

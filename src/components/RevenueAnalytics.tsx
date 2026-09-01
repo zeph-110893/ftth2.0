@@ -19,17 +19,23 @@ export const RevenueAnalytics: React.FC<RevenueAnalyticsProps> = ({
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [selectedMonth, setSelectedMonth] = useState<string>(CURRENT_MONTH);
 
+  // Excluded subscribers are omitted from total subscriber count, outstanding balances, and gross revenue calculations
+  const nonExcludedSubs = subscribers.filter((s) => s.status !== 'Exclude');
+  const nonExcludedSubIds = new Set(nonExcludedSubs.map((s) => s.id));
+  const validPayments = payments.filter((p) => nonExcludedSubIds.has(p.sub));
+  const excludedCount = subscribers.length - nonExcludedSubs.length;
+
   // All time metrics
-  const totalLifetimeRevenue = payments.reduce((acc, p) => acc + p.amount, 0);
+  const totalLifetimeRevenue = validPayments.reduce((acc, p) => acc + p.amount, 0);
   const totalLifetimeExpenses = expenses.reduce((acc, e) => acc + (e.totalPrice || 0), 0);
   const totalLifetimeNet = totalLifetimeRevenue - totalLifetimeExpenses;
 
-  // Unpaid total across all subscribers
+  // Unpaid total across all non-excluded subscribers
   let totalUnpaidBalance = 0;
   let totalOverdueBalance = 0;
 
-  subscribers.forEach((sub) => {
-    const m = calculateSubMetrics(sub, payments, CURRENT_MONTH);
+  nonExcludedSubs.forEach((sub) => {
+    const m = calculateSubMetrics(sub, validPayments, CURRENT_MONTH);
     totalUnpaidBalance += m.missed * m.rate;
     if (m.statusPill === 'overdue') {
       totalOverdueBalance += m.rate;
@@ -41,7 +47,7 @@ export const RevenueAnalytics: React.FC<RevenueAnalyticsProps> = ({
   const monthsForSelectedYear = MONTH_NAMES.map((mName) => `${mName} ${selectedYear}`);
 
   // Monthly stats
-  const monthlyPayments = payments.filter((p) => p.month === selectedMonth);
+  const monthlyPayments = validPayments.filter((p) => p.month === selectedMonth);
   const monthlyPaidSubsCount = new Set(monthlyPayments.map((p) => p.sub)).size;
   const monthlyGross = monthlyPayments.reduce((acc, p) => acc + p.amount, 0);
 
@@ -50,7 +56,7 @@ export const RevenueAnalytics: React.FC<RevenueAnalyticsProps> = ({
   const monthlyNet = monthlyGross - monthlyExpensesTotal;
 
   // Annual stats
-  const annualPayments = payments.filter((p) => {
+  const annualPayments = validPayments.filter((p) => {
     const parts = p.month.split(' ');
     return parts.length === 2 && parseInt(parts[1], 10) === selectedYear;
   });
@@ -97,7 +103,7 @@ export const RevenueAnalytics: React.FC<RevenueAnalyticsProps> = ({
               {formatCurrency(totalLifetimeRevenue)}
             </div>
             <div className="text-[11px] text-slate-400 mt-1">
-              {payments.length} payment transactions
+              {validPayments.length} payment transactions {excludedCount > 0 ? '(excludes exempt)' : ''}
             </div>
           </div>
 
@@ -132,11 +138,18 @@ export const RevenueAnalytics: React.FC<RevenueAnalyticsProps> = ({
         {/* Subscriber & Overdue Metrics */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-6">
           <div className="bg-slate-800/80 p-3.5 rounded-xl border border-slate-700">
-            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Total Subscribers</span>
+            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Total Subscribers</span>
+              </div>
+              {excludedCount > 0 && (
+                <span className="text-[10px] text-purple-300 font-semibold bg-purple-900/50 px-1.5 py-0.5 rounded border border-purple-500/30">
+                  {excludedCount} exempt
+                </span>
+              )}
             </div>
-            <div className="text-xl font-bold font-mono text-white mt-1">{subscribers.length}</div>
+            <div className="text-xl font-bold font-mono text-white mt-1">{nonExcludedSubs.length}</div>
           </div>
 
           <div className="bg-slate-800/80 p-3.5 rounded-xl border border-slate-700">
@@ -182,7 +195,7 @@ export const RevenueAnalytics: React.FC<RevenueAnalyticsProps> = ({
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-500 font-medium">Paid Subscribers</span>
                 <span className="font-bold text-slate-900 font-mono">
-                  {monthlyPaidSubsCount} / {subscribers.length}
+                  {monthlyPaidSubsCount} / {nonExcludedSubs.length}
                 </span>
               </div>
 
@@ -271,7 +284,7 @@ export const RevenueAnalytics: React.FC<RevenueAnalyticsProps> = ({
             <div className="space-y-3 mt-4">
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-500 font-medium">Total Transactions</span>
-                <span className="font-bold text-slate-900 font-mono">{payments.length} payments</span>
+                <span className="font-bold text-slate-900 font-mono">{validPayments.length} payments</span>
               </div>
 
               <div className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100">

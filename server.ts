@@ -560,8 +560,10 @@ async function startServer() {
         if (!isNaN(p.getTime())) dueDay = p.getDate();
       }
 
-      let statusPill: 'active' | 'due' | 'overdue' | 'inactive' = 'active';
-      if (selectedSub.status === 'Inactive') {
+      let statusPill: 'active' | 'due' | 'overdue' | 'inactive' | 'exclude' = 'active';
+      if (selectedSub.status === 'Exclude') {
+        statusPill = 'exclude';
+      } else if (selectedSub.status === 'Inactive') {
         statusPill = 'inactive';
       } else if (!isPaidCurrent) {
         if (now.getDate() > dueDay) {
@@ -1597,6 +1599,7 @@ async function startServer() {
 
       // helper to compute status
       const computeStatus = (sub: any) => {
+        if (sub.status === 'Exclude') return 'exclude';
         if (sub.status === 'Inactive') return 'inactive';
         const subPayments = payments.filter((p: any) => p.sub === sub.id);
         const monthsPaid = new Set(subPayments.map((p: any) => p.month));

@@ -1,4 +1,4 @@
-export type AccountStatus = 'Active' | 'Overdue' | 'Inactive';
+export type AccountStatus = 'Active' | 'Overdue' | 'Inactive' | 'Exclude';
 
 export type PaymentMethod = 'Cash' | 'GCash' | 'Bank Transfer' | 'Maya' | 'Other';
 
@@ -36,7 +36,7 @@ export interface SubCalculatedData {
   rate: number;
   dueDay: number | null;
   accountStatus: AccountStatus;
-  statusPill: 'active' | 'due' | 'overdue' | 'inactive';
+  statusPill: 'active' | 'due' | 'overdue' | 'inactive' | 'exclude';
   paidCurrent: boolean;
   missed: number; // missed months count on record
   totalPaid: number;
@@ -205,7 +205,7 @@ export interface SubscriberPortalData {
   } | null;
   billing?: {
     currentMonth: string;
-    statusPill: 'active' | 'due' | 'overdue' | 'inactive';
+    statusPill: 'active' | 'due' | 'overdue' | 'inactive' | 'exclude';
     isPaidCurrent: boolean;
     nextDueDate: string;
     daysRemaining: number;

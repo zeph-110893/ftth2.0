@@ -220,6 +220,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
               >
                 <option value="Active">Active</option>
                 <option value="Inactive">Inactive</option>
+                <option value="Exclude">Exclude</option>
               </select>
             </div>
           </div>

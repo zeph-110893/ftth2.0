@@ -116,6 +116,24 @@ export function calculateSubMetrics(
   const dueDay = sub.dueDay ?? null;
   const accountStatus = sub.status || 'Active';
 
+  if (sub.status === 'Exclude') {
+    const totalPaid = entries.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+    return {
+      id: sub.id,
+      subscriber: sub,
+      entries,
+      monthsPaid,
+      rate,
+      dueDay,
+      accountStatus,
+      statusPill: 'exclude',
+      paidCurrent: true,
+      missed: 0,
+      totalPaid,
+      gap: 0
+    };
+  }
+
   const paidCurrent = paidKeys.has(currentKey);
 
   let gap = 0;
@@ -151,6 +169,7 @@ export function calculateSubMetrics(
 
 export function getUnpaidMonths(sub: Subscriber, allPayments: PaymentRecord[]): string[] {
   if (!sub) return [];
+  if (sub.status === 'Exclude') return [];
   const entries = allPayments.filter(p => Number(p.sub) === Number(sub.id));
   const paidKeys = new Set(
     entries
@@ -198,7 +217,8 @@ export function getUnpaidMonths(sub: Subscriber, allPayments: PaymentRecord[]): 
   return unpaid;
 }
 
-export function getSubscriberBillingStatus(sub: Subscriber, allPayments: PaymentRecord[]): 'active' | 'due' | 'overdue' | 'inactive' {
+export function getSubscriberBillingStatus(sub: Subscriber, allPayments: PaymentRecord[]): 'active' | 'due' | 'overdue' | 'inactive' | 'exclude' {
+  if (sub.status === 'Exclude') return 'exclude';
   if (sub.status === 'Inactive') return 'inactive';
   const unpaidMonths = getUnpaidMonths(sub, allPayments);
   if (unpaidMonths.length === 0) return 'active';

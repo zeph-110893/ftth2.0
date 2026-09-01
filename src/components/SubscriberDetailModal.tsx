@@ -430,7 +430,9 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                 {isReadOnly ? (
                   <span
                     className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                      subscriber.status === 'Active'
+                      subscriber.status === 'Exclude'
+                        ? 'bg-purple-50 text-purple-700 border-purple-200'
+                        : subscriber.status === 'Active'
                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                         : 'bg-slate-100 text-slate-600 border-slate-200'
                     }`}
@@ -442,13 +444,16 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                     value={subscriber.status || 'Active'}
                     onChange={(e) => handleStatusChange(e.target.value as AccountStatus)}
                     className={`px-2.5 py-0.5 rounded-full text-xs font-bold border cursor-pointer focus:outline-none transition-colors ${
-                      subscriber.status === 'Active'
+                      subscriber.status === 'Exclude'
+                        ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                        : subscriber.status === 'Active'
                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                         : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
                     }`}
                   >
                     <option value="Active">Active</option>
                     <option value="Inactive">Inactive</option>
+                    <option value="Exclude">Exclude</option>
                   </select>
                 )}
               </div>
@@ -708,7 +713,9 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
               <div className="flex items-center gap-2 mt-0.5">
                 <span
                   className={`px-2 py-0.5 rounded-full text-xs font-bold border ${
-                    subscriber.status === 'Active'
+                    subscriber.status === 'Exclude'
+                      ? 'bg-purple-50 text-purple-700 border-purple-200'
+                      : subscriber.status === 'Active'
                       ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                       : 'bg-slate-100 text-slate-600 border-slate-200'
                   }`}
