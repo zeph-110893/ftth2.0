@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Plus, UserCheck, ArrowUpDown, ArrowUp, ArrowDown, Wifi, ShieldAlert, AlertTriangle, CheckCircle2, X, Ban, Network, RefreshCw } from 'lucide-react';
+import { Search, Plus, UserCheck, ArrowUpDown, ArrowUp, ArrowDown, Wifi, ShieldAlert, AlertTriangle, CheckCircle2, X, Ban, Network, RefreshCw, ExternalLink } from 'lucide-react';
 import { Subscriber, PaymentRecord, SubCalculatedData, MikroTikDhcpLease, MikroTikInterface, AuthUser } from '../types';
 import { calculateSubMetrics, displayName, formatCurrency, CURRENT_MONTH, abbrMonth, TODAY, getUnpaidMonths, getSubscriberBillingStatus, getSubscriberDueDay, getLeasesForSubscriber, getInterfaceForSubscriber, formatBytes } from '../utils/billingUtils';
 import { authFetch, canWrite } from '../utils/auth';
@@ -409,6 +409,16 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                               : 'text-slate-900 group-hover:text-cyan-600'
                           }`}>
                             <span>{nameStr}</span>
+                            <a
+                              href={`?sub=${sub.id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-cyan-600 hover:bg-cyan-50 rounded transition-all"
+                              title="Open in separate tab"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
                             {unpaidCount > 0 && (
                               <span
                                 className={`inline-flex items-center justify-center min-w-[20px] px-1.5 py-0.5 text-[10px] font-bold border rounded-full shrink-0 ${

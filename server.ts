@@ -1607,11 +1607,15 @@ async function startServer() {
 
   app.post('/api/mikrotik/ping', async (req, res) => {
     try {
-      const { address } = req.body;
+      const { address, interface: iface, macAddress, vlan } = req.body;
       if (!address) {
         return res.status(400).json({ error: 'IP address is required' });
       }
-      const result = await pingIpAddress(db, address);
+      const result = await pingIpAddress(db, address, {
+        interface: iface,
+        macAddress,
+        vlan,
+      });
       res.json({ success: true, result });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1620,11 +1624,15 @@ async function startServer() {
 
   app.post('/api/mikrotik/ping-leases', async (req, res) => {
     try {
-      const { addresses } = req.body;
-      if (!Array.isArray(addresses) || addresses.length === 0) {
-        return res.status(400).json({ error: 'Array of IP addresses is required' });
+      const { addresses, leases, vlan, interface: defaultIface } = req.body;
+      const targets = leases && Array.isArray(leases) && leases.length > 0 ? leases : addresses;
+      if (!Array.isArray(targets) || targets.length === 0) {
+        return res.status(400).json({ error: 'Array of IP addresses or leases is required' });
       }
-      const results = await pingMultipleIpAddresses(db, addresses);
+      const results = await pingMultipleIpAddresses(db, targets, {
+        defaultVlan: vlan,
+        defaultInterface: defaultIface,
+      });
       res.json({ success: true, results });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

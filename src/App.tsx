@@ -16,7 +16,7 @@ import { LoginPage } from './components/LoginPage';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { DatabaseModal } from './components/DatabaseModal';
 
-import { SubscriberDetailModal } from './components/SubscriberDetailModal';
+import { SubscriberDetailPage } from './components/SubscriberDetailPage';
 import { AddSubscriberModal } from './components/AddSubscriberModal';
 import { AddExpenseModal } from './components/AddExpenseModal';
 import { SubscriberPortal } from './components/SubscriberPortal';
@@ -227,13 +227,56 @@ export default function App() {
     }
   }, [currentUser, currentTab]);
 
-  // Modal states
+  // Modal & View states
   const [selectedSubDetail, setSelectedSubDetail] = useState<Subscriber | null>(null);
   const [isAddSubOpen, setIsAddSubOpen] = useState(false);
   const [editingSub, setEditingSub] = useState<Subscriber | null>(null);
 
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+
+  // Dedicated Subscriber Detail Page selection & browser URL query sync
+  const handleSelectSubscriber = (sub: Subscriber | null) => {
+    setSelectedSubDetail(sub);
+    try {
+      const url = new URL(window.location.href);
+      if (sub) {
+        url.searchParams.set('sub', String(sub.id));
+        window.history.pushState({ subId: sub.id }, '', url.toString());
+      } else {
+        url.searchParams.delete('sub');
+        url.searchParams.delete('subscriber');
+        window.history.pushState({}, '', url.pathname + (url.search ? url.search : ''));
+      }
+    } catch (e) {
+      // Fallback in case of history state error
+    }
+  };
+
+  // Synchronize URL with selected subscriber on popstate or on initial data load
+  useEffect(() => {
+    const handleUrlChange = () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const subIdParam = params.get('sub') || params.get('subscriber');
+        if (subIdParam) {
+          const id = parseInt(subIdParam, 10);
+          const found = subscribers.find((s) => s.id === id);
+          if (found) {
+            setSelectedSubDetail(found);
+            return;
+          }
+        }
+        setSelectedSubDetail(null);
+      } catch (e) {}
+    };
+
+    window.addEventListener('popstate', handleUrlChange);
+    if (subscribers.length > 0) {
+      handleUrlChange();
+    }
+    return () => window.removeEventListener('popstate', handleUrlChange);
+  }, [subscribers]);
 
   // Computed metrics for counts (excluding Exclude status)
   const nonExcludedSubscribers = subscribers.filter((sub) => sub.status !== 'Exclude');
@@ -361,7 +404,7 @@ export default function App() {
     setSubscribers((prev) => prev.filter((s) => s.id !== subId));
     setPayments((prev) => prev.filter((p) => p.sub !== subId));
     if (selectedSubDetail?.id === subId) {
-      setSelectedSubDetail(null);
+      handleSelectSubscriber(null);
     }
 
     try {
@@ -457,6 +500,9 @@ export default function App() {
         currentTab={currentTab}
         currentUser={currentUser}
         onTabChange={(tab) => {
+          if (selectedSubDetail) {
+            handleSelectSubscriber(null);
+          }
           if (!isAdmin(currentUser) && (tab === 'mikrotik' || tab === 'activity')) {
             setCurrentTab('subscribers');
           } else {
@@ -475,6 +521,26 @@ export default function App() {
             <div className="w-8 h-8 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin" />
             <span className="text-xs font-semibold text-slate-600 font-mono">Loading FTTH Database from SQLite...</span>
           </div>
+        ) : selectedSubDetail ? (
+          <SubscriberDetailPage
+            subscriber={selectedSubDetail}
+            subscribers={subscribers}
+            payments={payments}
+            dhcpLeases={dhcpLeases}
+            mikrotikInterfaces={mikrotikInterfaces}
+            currentUser={currentUser}
+            previousTabName={currentTab}
+            onBack={() => handleSelectSubscriber(null)}
+            onUpdateSubscriber={handleSaveSubscriber}
+            onDeleteSubscriber={handleDeleteSubscriber}
+            onDeleteDhcpLease={handleDeleteDhcpLease}
+            onAddPayment={handleSavePayment}
+            onDeletePayment={handleDeletePayment}
+            onOpenEditModal={(sub) => {
+              setEditingSub(sub);
+              setIsAddSubOpen(true);
+            }}
+          />
         ) : (
           <>
             {currentTab === 'subscribers' && (
@@ -484,7 +550,7 @@ export default function App() {
                 dhcpLeases={dhcpLeases}
                 mikrotikInterfaces={mikrotikInterfaces}
                 currentUser={currentUser}
-                onSelectSubscriber={(sub) => setSelectedSubDetail(sub)}
+                onSelectSubscriber={(sub) => handleSelectSubscriber(sub)}
                 onAddSubscriber={() => {
                   setEditingSub(null);
                   setIsAddSubOpen(true);
@@ -523,7 +589,7 @@ export default function App() {
                 subscribers={subscribers}
                 payments={payments}
                 currentUser={currentUser}
-                onSelectSubscriber={(sub) => setSelectedSubDetail(sub)}
+                onSelectSubscriber={(sub) => handleSelectSubscriber(sub)}
               />
             )}
 
@@ -545,25 +611,6 @@ export default function App() {
       </main>
 
       {/* Modals & Drawers */}
-      <SubscriberDetailModal
-        subscriber={selectedSubDetail}
-        subscribers={subscribers}
-        payments={payments}
-        dhcpLeases={dhcpLeases}
-        mikrotikInterfaces={mikrotikInterfaces}
-        currentUser={currentUser}
-        onClose={() => setSelectedSubDetail(null)}
-        onUpdateSubscriber={handleSaveSubscriber}
-        onDeleteSubscriber={handleDeleteSubscriber}
-        onDeleteDhcpLease={handleDeleteDhcpLease}
-        onAddPayment={handleSavePayment}
-        onDeletePayment={handleDeletePayment}
-        onOpenEditModal={(sub) => {
-          setEditingSub(sub);
-          setIsAddSubOpen(true);
-        }}
-      />
-
       <AddSubscriberModal
         isOpen={isAddSubOpen}
         editingSubscriber={editingSub}
