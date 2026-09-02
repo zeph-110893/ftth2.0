@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Trash2, History, CheckCircle2, Edit2, Wifi, Server, Network, Power, Loader2, AlertTriangle, Shield, Eye, ChevronDown, Check } from 'lucide-react';
+import { X, Trash2, History, CheckCircle2, Edit2, Wifi, Server, Network, Power, Loader2, AlertTriangle, Shield, Eye, ChevronDown, Check, Activity, Radio } from 'lucide-react';
 import { Subscriber, PaymentRecord, AccountStatus, MikroTikDhcpLease, MikroTikInterface, AuthUser } from '../types';
 import {
   calculateSubMetrics,
@@ -90,6 +90,19 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
   const [dueDayInput, setDueDayInput] = useState('');
   const [dueRawInput, setDueRawInput] = useState('');
 
+  // State for DHCP lease pinging
+  const [pingResults, setPingResults] = useState<
+    Record<string, { alive: boolean; time?: string; message?: string; checkedAt: Date }>
+  >({});
+  const [isPingingAll, setIsPingingAll] = useState<boolean>(false);
+  const [pingingSingleIp, setPingingSingleIp] = useState<string | null>(null);
+  const [pingSummary, setPingSummary] = useState<{
+    total: number;
+    alive: number;
+    dead: number;
+    timestamp: string;
+  } | null>(null);
+
   // Synchronize inputs whenever subscriber changes
   useEffect(() => {
     if (!subscriber) return;
@@ -113,7 +126,87 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
     setSelectedUnpaid([]);
     setVlanToggleMsg(null);
     setLeaseDeleteMsg(null);
+    setPingResults({});
+    setPingSummary(null);
+    setIsPingingAll(false);
+    setPingingSingleIp(null);
   }, [subscriber?.id, subscriber?.vlan, subscriber?.rate, subscriber?.status, subscriber?.macAddress]);
+
+  const handlePingAllLeases = async () => {
+    if (subLeases.length === 0 || isPingingAll) return;
+    const ips = subLeases.map((l) => l.address).filter(Boolean);
+    if (ips.length === 0) return;
+
+    setIsPingingAll(true);
+    try {
+      const res = await authFetch('/api/mikrotik/ping-leases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addresses: ips }),
+      });
+      const data = await res.json();
+      if (data.success && data.results) {
+        const newResults: Record<string, { alive: boolean; time?: string; message?: string; checkedAt: Date }> = {
+          ...pingResults,
+        };
+        let aliveCount = 0;
+        let deadCount = 0;
+
+        for (const [ip, resObj] of Object.entries<any>(data.results)) {
+          const isAlive = Boolean(resObj.alive);
+          newResults[ip] = {
+            alive: isAlive,
+            time: resObj.time,
+            message: resObj.message,
+            checkedAt: new Date(),
+          };
+          if (isAlive) aliveCount++;
+          else deadCount++;
+        }
+
+        setPingResults(newResults);
+        setPingSummary({
+          total: ips.length,
+          alive: aliveCount,
+          dead: deadCount,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        });
+      }
+    } catch (err) {
+      console.error('Failed to ping leases:', err);
+    } finally {
+      setIsPingingAll(false);
+    }
+  };
+
+  const handlePingSingleLease = async (ip: string) => {
+    if (!ip || pingingSingleIp === ip || isPingingAll) return;
+    setPingingSingleIp(ip);
+    try {
+      const res = await authFetch('/api/mikrotik/ping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: ip }),
+      });
+      const data = await res.json();
+      if (data.success && data.result) {
+        const isAlive = Boolean(data.result.alive);
+        setPingResults((prev) => ({
+          ...prev,
+          [ip]: {
+            alive: isAlive,
+            time: data.result.time,
+            message: data.result.message,
+            checkedAt: new Date(),
+          },
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to ping IP:', err);
+    } finally {
+      setPingingSingleIp(null);
+    }
+  };
 
   const handleDeleteLeaseConfirm = async () => {
     if (!leaseToDelete || isReadOnly) return;
@@ -411,6 +504,63 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
   };
 
   const dueDateDisplay = formatDueDate(subscriber);
+
+  // Helper to render IP with ping response styling (green if responded, red if didn't respond)
+  const renderIpCell = (ipAddress: string) => {
+    const pingStatus = pingResults[ipAddress];
+    const isPingingThis = isPingingAll || pingingSingleIp === ipAddress;
+
+    if (pingStatus) {
+      if (pingStatus.alive) {
+        return (
+          <div
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 shadow-2xs transition-all"
+            title={`ICMP Response: ${pingStatus.time || '<1ms'} (${pingStatus.message || 'Online'}) at ${pingStatus.checkedAt.toLocaleTimeString()}`}
+          >
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-600"></span>
+            </span>
+            <span className="font-bold text-emerald-700">{ipAddress}</span>
+            {pingStatus.time && (
+              <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-200/60 px-1 py-0.5 rounded leading-none">
+                {pingStatus.time}
+              </span>
+            )}
+          </div>
+        );
+      } else {
+        return (
+          <div
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-mono font-bold bg-rose-50 text-rose-700 border border-rose-300 shadow-2xs transition-all"
+            title={`ICMP Failed: ${pingStatus.message || 'No response / Timeout'} at ${pingStatus.checkedAt.toLocaleTimeString()}`}
+          >
+            <span className="w-2 h-2 rounded-full bg-rose-600 shrink-0" />
+            <span className="font-bold text-rose-700">{ipAddress}</span>
+            <span className="text-[10px] font-semibold text-rose-800 bg-rose-200/60 px-1 py-0.5 rounded leading-none">
+              No response
+            </span>
+          </div>
+        );
+      }
+    }
+
+    if (isPingingThis) {
+      return (
+        <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-mono font-bold bg-amber-50 text-amber-800 border border-amber-300 transition-all">
+          <Loader2 className="w-3 h-3 animate-spin text-amber-600 shrink-0" />
+          <span className="font-bold text-amber-800">{ipAddress}</span>
+          <span className="text-[10px] text-amber-700 leading-none">Pinging...</span>
+        </div>
+      );
+    }
+
+    return (
+      <span className="font-mono font-bold text-slate-800 whitespace-nowrap">
+        {ipAddress}
+      </span>
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
@@ -1120,23 +1270,80 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
 
           {/* Section: CONNECTED DHCP LEASES ON VLAN */}
           <div className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                   <Wifi className="w-3.5 h-3.5 text-cyan-600" />
                   DHCP LEASES (VLAN {subscriber.vlan || 'N/A'})
                 </span>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[11px] font-bold border ${
+                    subLeases.length > 0
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-slate-100 text-slate-600 border-slate-200'
+                  }`}
+                >
+                  {subLeases.length} {subLeases.length === 1 ? 'device' : 'devices'}
+                </span>
               </div>
-              <span
-                className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
-                  subLeases.length > 0
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : 'bg-slate-100 text-slate-600 border-slate-200'
-                }`}
-              >
-                {subLeases.length} {subLeases.length === 1 ? 'device' : 'devices'}
-              </span>
+
+              {subLeases.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePingAllLeases}
+                    disabled={isPingingAll}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 text-white shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    title="Send ICMP ping to all listed DHCP lease IP addresses"
+                  >
+                    {isPingingAll ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Pinging Leases...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Activity className="w-3.5 h-3.5" />
+                        <span>Ping All Leases</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
+
+            {/* Ping Results Summary Banner */}
+            {pingSummary && (
+              <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs shadow-2xs">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="font-bold text-slate-700 flex items-center gap-1">
+                    <Activity className="w-3.5 h-3.5 text-cyan-600" />
+                    Ping Results:
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    {pingSummary.alive} Responded (Green)
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 text-rose-700 font-bold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                    {pingSummary.dead} No Response (Red)
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                  <span>Checked at {pingSummary.timestamp}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPingResults({});
+                      setPingSummary(null);
+                    }}
+                    className="text-slate-400 hover:text-slate-600 underline cursor-pointer ml-1"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Lease Delete Banner Message */}
             {leaseDeleteMsg && (
@@ -1171,10 +1378,23 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                   </div>
                 ) : (
                   subLeases.map((lease, idx) => (
-                    <div key={lease.id || lease.macAddress ? `mob-${lease.id || lease.macAddress}` : `mob-lease-${idx}`} className="p-3 space-y-1.5 hover:bg-slate-50/80 transition-colors">
+                    <div key={lease.id || lease.macAddress ? `mob-${lease.id || lease.macAddress}` : `mob-lease-${idx}`} className="p-3 space-y-2 hover:bg-slate-50/80 transition-colors">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono font-bold text-indigo-700 text-xs">{lease.address}</span>
-                        <div className="flex items-center gap-2">
+                        {renderIpCell(lease.address)}
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handlePingSingleLease(lease.address)}
+                            disabled={isPingingAll || pingingSingleIp === lease.address}
+                            className="p-1.5 rounded text-slate-500 hover:text-cyan-600 hover:bg-cyan-50 transition-colors cursor-pointer disabled:opacity-40"
+                            title={`Ping ${lease.address}`}
+                          >
+                            {pingingSingleIp === lease.address ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-600" />
+                            ) : (
+                              <Radio className="w-3.5 h-3.5" />
+                            )}
+                          </button>
                           <span
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0 ${
                               lease.status === 'bound'
@@ -1199,6 +1419,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                       </div>
                       <div className="flex items-center justify-between gap-2 text-[11px]">
                         <span className="text-slate-800 font-semibold truncate">{lease.hostName || '—'}</span>
+                        <span className="text-slate-400 font-mono text-[10px]">{lease.macAddress || ''}</span>
                       </div>
                     </div>
                   ))
@@ -1213,13 +1434,13 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                       <th className="py-2 px-3">IP ADDRESS</th>
                       <th className="py-2 px-3">HOST / DEVICE NAME</th>
                       <th className="py-2 px-3 text-center">STATUS</th>
-                      {!isReadOnly && <th className="py-2 px-3 text-right">ACTION</th>}
+                      <th className="py-2 px-3 text-right">ACTION</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs font-medium">
                     {subLeases.length === 0 ? (
                       <tr>
-                        <td colSpan={isReadOnly ? 3 : 4} className="py-5 text-center text-slate-400 bg-slate-50/20">
+                        <td colSpan={4} className="py-5 text-center text-slate-400 bg-slate-50/20">
                           <p className="font-semibold text-slate-600 text-xs">No active DHCP leases detected</p>
                           <p className="text-[11px] text-slate-400 mt-0.5">
                             {subscriber.vlan
@@ -1231,8 +1452,15 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                     ) : (
                       subLeases.map((lease, idx) => (
                         <tr key={lease.id || lease.macAddress ? `dt-${lease.id || lease.macAddress}` : `dt-lease-${idx}`} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="py-2 px-3 font-mono font-bold text-cyan-700 whitespace-nowrap">{lease.address}</td>
-                          <td className="py-2 px-3 text-slate-800 font-semibold">{lease.hostName || '—'}</td>
+                          <td className="py-2 px-3 whitespace-nowrap">
+                            {renderIpCell(lease.address)}
+                          </td>
+                          <td className="py-2 px-3 text-slate-800 font-semibold">
+                            <div>{lease.hostName || '—'}</div>
+                            {lease.macAddress && (
+                              <div className="text-[10px] font-mono text-slate-400 font-normal">{lease.macAddress}</div>
+                            )}
+                          </td>
                           <td className="py-2 px-3 text-center whitespace-nowrap">
                             <span
                               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
@@ -1245,19 +1473,35 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                               {lease.status || 'bound'}
                             </span>
                           </td>
-                          {!isReadOnly && (
-                            <td className="py-2 px-3 text-right whitespace-nowrap">
+                          <td className="py-2 px-3 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-1">
                               <button
                                 type="button"
-                                onClick={() => setLeaseToDelete(lease)}
-                                className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer inline-flex items-center gap-1 text-[11px] font-semibold"
-                                title={`Delete DHCP lease device (${lease.hostName || lease.address})`}
+                                onClick={() => handlePingSingleLease(lease.address)}
+                                disabled={isPingingAll || pingingSingleIp === lease.address}
+                                className="px-2 py-1 rounded text-slate-600 hover:text-cyan-700 hover:bg-cyan-50 transition-colors cursor-pointer inline-flex items-center gap-1 text-[11px] font-semibold disabled:opacity-40"
+                                title={`Ping ${lease.address}`}
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                <span className="sr-only sm:not-sr-only text-[10px]">Delete</span>
+                                {pingingSingleIp === lease.address ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-600" />
+                                ) : (
+                                  <Radio className="w-3.5 h-3.5" />
+                                )}
+                                <span className="sr-only sm:not-sr-only text-[10px]">Ping</span>
                               </button>
-                            </td>
-                          )}
+                              {!isReadOnly && (
+                                <button
+                                  type="button"
+                                  onClick={() => setLeaseToDelete(lease)}
+                                  className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer inline-flex items-center gap-1 text-[11px] font-semibold"
+                                  title={`Delete DHCP lease device (${lease.hostName || lease.address})`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span className="sr-only sm:not-sr-only text-[10px]">Delete</span>
+                                </button>
+                              )}
+                            </div>
+                          </td>
                         </tr>
                       ))
                     )}

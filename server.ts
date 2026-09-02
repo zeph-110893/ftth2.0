@@ -14,6 +14,8 @@ import {
   getRouterDhcpLeases,
   getRouterIpAddresses,
   deleteDhcpLease,
+  pingIpAddress,
+  pingMultipleIpAddresses,
   toggleSubscriberInternet,
   batchSyncSubscribersToRouter,
   toggleVlanInterface,
@@ -1549,6 +1551,32 @@ async function startServer() {
       }
       const result = await deleteDhcpLease(db, leaseId, macAddress);
       res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/mikrotik/ping', async (req, res) => {
+    try {
+      const { address } = req.body;
+      if (!address) {
+        return res.status(400).json({ error: 'IP address is required' });
+      }
+      const result = await pingIpAddress(db, address);
+      res.json({ success: true, result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/mikrotik/ping-leases', async (req, res) => {
+    try {
+      const { addresses } = req.body;
+      if (!Array.isArray(addresses) || addresses.length === 0) {
+        return res.status(400).json({ error: 'Array of IP addresses is required' });
+      }
+      const results = await pingMultipleIpAddresses(db, addresses);
+      res.json({ success: true, results });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
