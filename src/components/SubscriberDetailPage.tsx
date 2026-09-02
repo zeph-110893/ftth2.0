@@ -370,7 +370,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
     onUpdateSubscriber({ ...subscriber, status: newStatus });
   };
 
-  // Ping All Leases with 10-count ARP-Ping (Layer 2)
+  // Ping All Leases with ARP-Ping (Layer 2)
   const handlePingAllLeases = async () => {
     if (subLeases.length === 0 || isPingingAll) return;
     const targets = subLeases.map((l) => ({
@@ -471,7 +471,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
     }
   };
 
-  // Ping Single IP with 10-count ARP-Ping (Layer 2)
+  // Ping Single IP with ARP-Ping (Layer 2)
   const handlePingSingleLease = async (lease: MikroTikDhcpLease) => {
     const ip = lease.address;
     if (!ip || pingingSingleIp === ip || isPingingAll) return;
@@ -708,7 +708,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
         <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-amber-50 text-amber-800 border border-amber-300 transition-all w-fit">
           <Loader2 className="w-3 h-3 animate-spin text-amber-600 shrink-0" />
           <span className="font-bold text-amber-800">{ipAddress}</span>
-          <span className="text-[10px] text-amber-700 leading-none">ARP-Pinging (10x)...</span>
+          <span className="text-[10px] text-amber-700 leading-none">ARP-Pinging...</span>
         </div>
       );
     }
@@ -1486,7 +1486,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
           </div>
         </div>
 
-        {/* Right Column: DHCP Leases (with 10x Ping) & Billing Payment History */}
+        {/* Right Column: DHCP Leases (with ARP-Ping) & Billing Payment History */}
         <div className="lg:col-span-7 space-y-6">
           {/* Card: DHCP Leases & Real-time Connectivity Diagnostics */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
@@ -1516,17 +1516,17 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                   onClick={handlePingAllLeases}
                   disabled={isPingingAll}
                   className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                  title="Send 10 Layer-2 ARP-Ping packets (bypasses client firewall ICMP blocks)"
+                  title="Send Layer-2 ARP-Ping packets (bypasses client firewall ICMP blocks)"
                 >
                   {isPingingAll ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>ARP-Pinging (10x)...</span>
+                      <span>ARP-Pinging...</span>
                     </>
                   ) : (
                     <>
                       <Radio className="w-3.5 h-3.5" />
-                      <span>Verify ARP-Ping (10x)</span>
+                      <span>Verify ARP-Ping</span>
                     </>
                   )}
                 </button>
@@ -1537,7 +1537,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
             {pingSummary && (
               <div className="px-5 py-2.5 bg-slate-900 text-slate-200 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <div className="flex items-center gap-3">
-                  <span className="font-bold text-slate-300">10-Count ARP-Ping Summary:</span>
+                  <span className="font-bold text-slate-300">ARP-Ping Summary:</span>
                   <span className="inline-flex items-center gap-1 text-emerald-400 font-bold">
                     <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
                     {pingSummary.alive} Online (Responded)
@@ -1630,14 +1630,14 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                               onClick={() => handlePingSingleLease(lease)}
                               disabled={isPingingAll || pingingSingleIp === lease.address}
                               className="px-2.5 py-1 rounded-lg text-slate-600 hover:text-cyan-700 hover:bg-cyan-50 border border-transparent hover:border-cyan-200 transition-colors cursor-pointer inline-flex items-center gap-1.5 text-xs font-semibold disabled:opacity-40"
-                              title={`Send 10 Layer-2 ARP-Ping packets to ${lease.address} (bypasses ICMP blocks)`}
+                              title={`Send Layer-2 ARP-Ping packets to ${lease.address} (bypasses ICMP blocks)`}
                             >
                               {pingingSingleIp === lease.address ? (
                                 <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-600" />
                               ) : (
                                 <Radio className="w-3.5 h-3.5" />
                               )}
-                              <span>ARP-Ping 10x</span>
+                              <span>ARP-Ping</span>
                             </button>
                             {!isReadOnly && (
                               <button

@@ -475,8 +475,8 @@ export async function pingIpAddress(
     const pingPayload: Record<string, any> = {
       address: cleanIp,
       'arp-ping': 'yes',
-      count: '10',
-      interval: '300ms',
+      count: '3',
+      interval: '200ms',
     };
     if (candidateInterface) {
       pingPayload.interface = candidateInterface;
@@ -577,8 +577,8 @@ export async function pingIpAddress(
   }
 
   // 3. Fallback preview simulation for offline/preview environments where real router hardware is not directly reachable:
-  // Simulates 10-count ARP-Ping probe timing (~1.5s) to provide instant, realistic Layer-2 diagnostics.
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  // Simulates rapid ARP-Ping probe timing (~400ms) to provide instant, realistic Layer-2 diagnostics.
+  await new Promise((resolve) => setTimeout(resolve, 400));
 
   const lastOctet = parseInt(cleanIp.split('.').pop() || '0', 10);
   const isAlive = lastOctet === 1 || lastOctet === 10 || lastOctet === 100 || (lastOctet > 0 && lastOctet % 2 === 0);
