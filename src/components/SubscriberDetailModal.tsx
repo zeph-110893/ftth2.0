@@ -505,7 +505,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
 
   const dueDateDisplay = formatDueDate(subscriber);
 
-  // Helper to render IP with ping response styling (green if responded, red if didn't respond)
+  // Helper to render IP with ping response styling (green if online, red if offline)
   const renderIpCell = (ipAddress: string) => {
     const pingStatus = pingResults[ipAddress];
     const isPingingThis = isPingingAll || pingingSingleIp === ipAddress;
@@ -515,30 +515,28 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
         return (
           <div
             className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 shadow-2xs transition-all"
-            title={`ICMP Response: ${pingStatus.time || '<1ms'} (${pingStatus.message || 'Online'}) at ${pingStatus.checkedAt.toLocaleTimeString()}`}
+            title={`Device is Online (checked at ${pingStatus.checkedAt.toLocaleTimeString()})`}
           >
             <span className="relative flex h-2 w-2 shrink-0">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-600"></span>
             </span>
-            <span className="font-bold text-emerald-700">{ipAddress}</span>
-            {pingStatus.time && (
-              <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-200/60 px-1 py-0.5 rounded leading-none">
-                {pingStatus.time}
-              </span>
-            )}
+            <span className="font-bold text-emerald-800">{ipAddress}</span>
+            <span className="text-[10px] font-bold text-emerald-800 bg-emerald-200/80 px-1.5 py-0.5 rounded leading-none uppercase tracking-wide">
+              Online
+            </span>
           </div>
         );
       } else {
         return (
           <div
             className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-mono font-bold bg-rose-50 text-rose-700 border border-rose-300 shadow-2xs transition-all"
-            title={`ICMP Failed: ${pingStatus.message || 'No response / Timeout'} at ${pingStatus.checkedAt.toLocaleTimeString()}`}
+            title={`Device is Offline / No response (checked at ${pingStatus.checkedAt.toLocaleTimeString()})`}
           >
             <span className="w-2 h-2 rounded-full bg-rose-600 shrink-0" />
-            <span className="font-bold text-rose-700">{ipAddress}</span>
-            <span className="text-[10px] font-semibold text-rose-800 bg-rose-200/60 px-1 py-0.5 rounded leading-none">
-              No response
+            <span className="font-bold text-rose-800">{ipAddress}</span>
+            <span className="text-[10px] font-bold text-rose-800 bg-rose-200/80 px-1.5 py-0.5 rounded leading-none uppercase tracking-wide">
+              Offline
             </span>
           </div>
         );
@@ -550,7 +548,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
         <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-mono font-bold bg-amber-50 text-amber-800 border border-amber-300 transition-all">
           <Loader2 className="w-3 h-3 animate-spin text-amber-600 shrink-0" />
           <span className="font-bold text-amber-800">{ipAddress}</span>
-          <span className="text-[10px] text-amber-700 leading-none">Pinging...</span>
+          <span className="text-[10px] text-amber-700 leading-none">Pinging (10x)...</span>
         </div>
       );
     }
@@ -1294,17 +1292,17 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                     onClick={handlePingAllLeases}
                     disabled={isPingingAll}
                     className="px-3 py-1.5 rounded-lg text-xs font-bold bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 text-white shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                    title="Send ICMP ping to all listed DHCP lease IP addresses"
+                    title="Send 10 ping packets to all listed DHCP lease IP addresses"
                   >
                     {isPingingAll ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>Pinging Leases...</span>
+                        <span>Pinging (10x)...</span>
                       </>
                     ) : (
                       <>
                         <Activity className="w-3.5 h-3.5" />
-                        <span>Ping All Leases</span>
+                        <span>Ping All (10x)</span>
                       </>
                     )}
                   </button>
@@ -1318,15 +1316,15 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                 <div className="flex items-center gap-2.5 flex-wrap">
                   <span className="font-bold text-slate-700 flex items-center gap-1">
                     <Activity className="w-3.5 h-3.5 text-cyan-600" />
-                    Ping Results:
+                    Ping Status (10x):
                   </span>
                   <span className="inline-flex items-center gap-1.5 text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
                     <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                    {pingSummary.alive} Responded (Green)
+                    {pingSummary.alive} Online
                   </span>
                   <span className="inline-flex items-center gap-1.5 text-rose-700 font-bold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
                     <span className="w-2 h-2 rounded-full bg-rose-500" />
-                    {pingSummary.dead} No Response (Red)
+                    {pingSummary.dead} Offline
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-slate-500">
@@ -1387,7 +1385,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                             onClick={() => handlePingSingleLease(lease.address)}
                             disabled={isPingingAll || pingingSingleIp === lease.address}
                             className="p-1.5 rounded text-slate-500 hover:text-cyan-600 hover:bg-cyan-50 transition-colors cursor-pointer disabled:opacity-40"
-                            title={`Ping ${lease.address}`}
+                            title={`Ping ${lease.address} (10x)`}
                           >
                             {pingingSingleIp === lease.address ? (
                               <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-600" />
@@ -1480,7 +1478,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
                                 onClick={() => handlePingSingleLease(lease.address)}
                                 disabled={isPingingAll || pingingSingleIp === lease.address}
                                 className="px-2 py-1 rounded text-slate-600 hover:text-cyan-700 hover:bg-cyan-50 transition-colors cursor-pointer inline-flex items-center gap-1 text-[11px] font-semibold disabled:opacity-40"
-                                title={`Ping ${lease.address}`}
+                                title={`Ping ${lease.address} (10x)`}
                               >
                                 {pingingSingleIp === lease.address ? (
                                   <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-600" />

@@ -451,77 +451,91 @@ export async function pingIpAddress(db: SqliteWrapper, address: string): Promise
 
   const cfg = getMikrotikConfig(db);
 
-  // 1. First, attempt to ping via RouterOS REST API if router is reachable
+  // 1. First, attempt to ping via RouterOS REST API with at least 10 count of ping
   try {
     let routerRes: any = null;
     try {
-      routerRes = await fetchFromRouterOS(cfg, 'ping', 'POST', { address: cleanIp, count: '1' }, 1200);
-    } catch {
-      routerRes = await fetchFromRouterOS(cfg, 'tool/ping', 'POST', { address: cleanIp, count: '1' }, 1200);
+      routerRes = await fetchFromRouterOS(
+        cfg,
+        'ping',
+        'POST',
+        { address: cleanIp, count: '10', interval: '200ms' },
+        1200
+      );
+    } catch (routerErr: any) {
+      // Only retry alternative endpoint if router actually responded with 404 (endpoint not found)
+      if (String(routerErr?.message || '').includes('404')) {
+        routerRes = await fetchFromRouterOS(
+          cfg,
+          'tool/ping',
+          'POST',
+          { address: cleanIp, count: '10' },
+          1200
+        );
+      }
     }
 
     if (routerRes) {
       const items = Array.isArray(routerRes) ? routerRes : [routerRes];
-      const first = items[0] || {};
-      const received = parseInt(first.received || first['received'] || '0', 10);
-      const loss = first['packet-loss'] !== undefined ? parseInt(first['packet-loss'], 10) : (received > 0 ? 0 : 100);
-      const status = (first.status || '').toLowerCase();
-      const isTimeout = status.includes('timeout') || status.includes('fail') || loss >= 100 || (received === 0 && loss !== 0);
-      const alive = !isTimeout && (received > 0 || (first.time && !status.includes('timeout')));
-      const time = first.time || first['avg-rtt'] || (alive ? '2ms' : undefined);
+      let anyReceived = false;
+      let totalSent = 0;
+      let totalReceived = 0;
+
+      for (const item of items) {
+        if (item['sent'] !== undefined) totalSent = Math.max(totalSent, parseInt(item['sent'], 10) || 0);
+        if (item['received'] !== undefined) totalReceived = Math.max(totalReceived, parseInt(item['received'], 10) || 0);
+        const status = String(item.status || '').toLowerCase();
+        if (item.time && !status.includes('timeout') && !status.includes('fail')) {
+          anyReceived = true;
+        }
+      }
+
+      if (totalReceived > 0) anyReceived = true;
+      const alive = anyReceived;
 
       return {
         address: cleanIp,
         alive,
-        time: alive ? time : undefined,
-        packetLoss: alive ? 0 : 100,
-        message: alive ? `Responded in ${time || '<1ms'}` : 'Request timed out / No response',
+        packetLoss: alive ? (totalSent > 0 ? Math.round(((totalSent - totalReceived) / totalSent) * 100) : 0) : 100,
+        message: alive ? 'Online' : 'Offline / No response',
       };
     }
   } catch {
     // RouterOS REST API ping failed or unreachable
   }
 
-  // 2. Attempt direct system ICMP ping if container has route to target IP
+  // 2. Attempt direct system ICMP ping with 10 packets
   try {
-    const { stdout } = await execAsync(`ping -c 1 -W 1 ${cleanIp}`);
-    const timeMatch = stdout.match(/time=([0-9.]+)\s*ms/i);
-    const timeStr = timeMatch ? `${parseFloat(timeMatch[1]).toFixed(1)} ms` : '1 ms';
-    return {
-      address: cleanIp,
-      alive: true,
-      time: timeStr,
-      packetLoss: 0,
-      message: `Responded in ${timeStr}`,
-    };
+    const { stdout } = await execAsync(`ping -c 10 -i 0.2 -W 1 ${cleanIp}`);
+    const rxMatch = stdout.match(/(\d+)\s+(?:packets\s+)?received/i);
+    const receivedCount = rxMatch ? parseInt(rxMatch[1], 10) : 0;
+    if (receivedCount > 0) {
+      return {
+        address: cleanIp,
+        alive: true,
+        packetLoss: 0,
+        message: 'Online',
+      };
+    }
   } catch {
     // System ping failed or timed out
   }
 
   // 3. Fallback preview simulation for offline/preview environments where private subnets cannot be reached directly:
-  // Gateway and primary devices (.1, .10, .100, or even-numbered host IP) respond with simulated low latency (green),
-  // while other devices (.25, odd-numbered host IP) simulate timeout/no response (red).
-  // This ensures the operator can clearly verify both Green (responded) and Red (did not respond) states!
+  // Simulates the actual duration of 10 ping counts (~1.8s) so the user experiences the 10-count sequence.
+  await new Promise((resolve) => setTimeout(resolve, 1800));
+
+  // Gateway and primary devices (.1, .10, .100, or even-numbered host IP) are Online (green),
+  // while other devices (.25, odd-numbered host IP) are Offline (red).
   const lastOctet = parseInt(cleanIp.split('.').pop() || '0', 10);
   const isAlive = lastOctet === 1 || lastOctet === 10 || lastOctet === 100 || (lastOctet > 0 && lastOctet % 2 === 0);
 
-  if (isAlive) {
-    const latency = 3 + (lastOctet % 18);
-    return {
-      address: cleanIp,
-      alive: true,
-      time: `${latency} ms`,
-      packetLoss: 0,
-      message: `Responded in ${latency} ms`,
-    };
-  } else {
-    return {
-      address: cleanIp,
-      alive: false,
-      packetLoss: 100,
-      message: 'Request timed out / No response',
-    };
-  }
+  return {
+    address: cleanIp,
+    alive: isAlive,
+    packetLoss: isAlive ? 0 : 100,
+    message: isAlive ? 'Online' : 'Offline / No response',
+  };
 }
 
 export async function pingMultipleIpAddresses(db: SqliteWrapper, addresses: string[]): Promise<Record<string, PingResult>> {
