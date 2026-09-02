@@ -167,6 +167,16 @@ export async function getDb(): Promise<SqliteWrapper> {
       details TEXT,
       ipAddress TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      token TEXT PRIMARY KEY,
+      userId INTEGER NOT NULL,
+      username TEXT NOT NULL,
+      name TEXT,
+      role TEXT NOT NULL,
+      permission TEXT NOT NULL,
+      expiresAt INTEGER NOT NULL
+    );
   `);
 
   // Ensure permission column exists on users table
@@ -301,6 +311,16 @@ export async function replaceDatabase(fileBuffer: Buffer): Promise<SqliteWrapper
       description TEXT NOT NULL,
       details TEXT,
       ipAddress TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      token TEXT PRIMARY KEY,
+      userId INTEGER NOT NULL,
+      username TEXT NOT NULL,
+      name TEXT,
+      role TEXT NOT NULL,
+      permission TEXT NOT NULL,
+      expiresAt INTEGER NOT NULL
     );
   `);
 

@@ -451,7 +451,7 @@ export async function pingIpAddress(db: SqliteWrapper, address: string): Promise
 
   const cfg = getMikrotikConfig(db);
 
-  // 1. First, attempt to ping via RouterOS REST API with at least 10 count of ping
+  // 1. First, attempt to ping via RouterOS REST API with full 10-count ping
   try {
     let routerRes: any = null;
     try {
@@ -459,8 +459,8 @@ export async function pingIpAddress(db: SqliteWrapper, address: string): Promise
         cfg,
         'ping',
         'POST',
-        { address: cleanIp, count: '10', interval: '200ms' },
-        1200
+        { address: cleanIp, count: '10', interval: '500ms' },
+        12000
       );
     } catch (routerErr: any) {
       // Only retry alternative endpoint if router actually responded with 404 (endpoint not found)
@@ -469,8 +469,8 @@ export async function pingIpAddress(db: SqliteWrapper, address: string): Promise
           cfg,
           'tool/ping',
           'POST',
-          { address: cleanIp, count: '10' },
-          1200
+          { address: cleanIp, count: '10', interval: '500ms' },
+          12000
         );
       }
     }
@@ -506,7 +506,7 @@ export async function pingIpAddress(db: SqliteWrapper, address: string): Promise
 
   // 2. Attempt direct system ICMP ping with 10 packets
   try {
-    const { stdout } = await execAsync(`ping -c 10 -i 0.2 -W 1 ${cleanIp}`);
+    const { stdout } = await execAsync(`ping -c 10 -i 0.4 -W 1 ${cleanIp}`);
     const rxMatch = stdout.match(/(\d+)\s+(?:packets\s+)?received/i);
     const receivedCount = rxMatch ? parseInt(rxMatch[1], 10) : 0;
     if (receivedCount > 0) {
@@ -522,8 +522,8 @@ export async function pingIpAddress(db: SqliteWrapper, address: string): Promise
   }
 
   // 3. Fallback preview simulation for offline/preview environments where private subnets cannot be reached directly:
-  // Simulates the actual duration of 10 ping counts (~1.8s) so the user experiences the 10-count sequence.
-  await new Promise((resolve) => setTimeout(resolve, 1800));
+  // Simulates the thorough duration of 10 ping counts (~4.5s) so the user experiences the actual 10-count diagnostic sequence.
+  await new Promise((resolve) => setTimeout(resolve, 4500));
 
   // Gateway and primary devices (.1, .10, .100, or even-numbered host IP) are Online (green),
   // while other devices (.25, odd-numbered host IP) are Offline (red).

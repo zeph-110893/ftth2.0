@@ -36,11 +36,28 @@ async function startServer() {
   // Initialize SQLite DB
   const db = await getDb();
 
-  // Active user sessions (in-memory with 7-day expiration)
+  // Active user sessions (in-memory cache backed by SQLite auth_sessions table)
   const activeSessions = new Map<
     string,
     { userId: number; username: string; name: string; role: string; permission: 'ADMIN' | 'OPERATOR'; expiresAt: number }
   >();
+
+  // Restore existing non-expired sessions from database
+  try {
+    const savedSessions = db.all('SELECT * FROM auth_sessions WHERE expiresAt > ?', [Date.now()]);
+    for (const s of savedSessions) {
+      activeSessions.set(s.token, {
+        userId: s.userId,
+        username: s.username,
+        name: s.name,
+        role: s.role,
+        permission: s.permission,
+        expiresAt: s.expiresAt,
+      });
+    }
+  } catch (err) {
+    console.warn('Could not load auth_sessions:', err);
+  }
 
   function createSession(user: { id: number; username: string; name: string; role: string; permission?: string }) {
     const token = crypto.randomBytes(32).toString('hex');
@@ -51,14 +68,24 @@ async function startServer() {
         : 'OPERATOR';
     const role = permission === 'ADMIN' ? 'admin' : 'operator';
 
-    activeSessions.set(token, {
+    const sessionData = {
       userId: user.id,
       username: user.username,
       name: user.name,
       role,
       permission,
       expiresAt,
-    });
+    };
+    activeSessions.set(token, sessionData);
+    try {
+      db.run(
+        'INSERT OR REPLACE INTO auth_sessions (token, userId, username, name, role, permission, expiresAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [token, user.id, user.username, user.name || '', role, permission, expiresAt]
+      );
+    } catch (e) {
+      console.warn('Failed to persist session to db:', e);
+    }
+
     return { 
       token, 
       expiresAt, 
@@ -71,10 +98,29 @@ async function startServer() {
     if (!authHeader) return null;
     const token = authHeader.replace(/^Bearer\s+/i, '').trim();
     if (!token) return null;
-    const session = activeSessions.get(token);
+    let session = activeSessions.get(token);
+    if (!session) {
+      try {
+        const dbSession = db.get('SELECT * FROM auth_sessions WHERE token = ? AND expiresAt > ?', [token, Date.now()]);
+        if (dbSession) {
+          session = {
+            userId: dbSession.userId,
+            username: dbSession.username,
+            name: dbSession.name,
+            role: dbSession.role,
+            permission: dbSession.permission,
+            expiresAt: dbSession.expiresAt,
+          };
+          activeSessions.set(token, session);
+        }
+      } catch {}
+    }
     if (!session) return null;
     if (Date.now() > session.expiresAt) {
       activeSessions.delete(token);
+      try {
+        db.run('DELETE FROM auth_sessions WHERE token = ?', [token]);
+      } catch {}
       return null;
     }
     return session;
@@ -375,6 +421,9 @@ async function startServer() {
     if (authHeader) {
       const token = authHeader.replace(/^Bearer\s+/i, '').trim();
       activeSessions.delete(token);
+      try {
+        db.run('DELETE FROM auth_sessions WHERE token = ?', [token]);
+      } catch {}
     }
     res.json({ success: true, message: 'Logged out successfully' });
   });

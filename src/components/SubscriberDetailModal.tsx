@@ -171,9 +171,40 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
           dead: deadCount,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         });
+      } else {
+        const newResults = { ...pingResults };
+        ips.forEach((ip) => {
+          newResults[ip] = {
+            alive: false,
+            message: data.error || 'Ping test failed',
+            checkedAt: new Date(),
+          };
+        });
+        setPingResults(newResults);
+        setPingSummary({
+          total: ips.length,
+          alive: 0,
+          dead: ips.length,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        });
       }
     } catch (err) {
       console.error('Failed to ping leases:', err);
+      const newResults = { ...pingResults };
+      ips.forEach((ip) => {
+        newResults[ip] = {
+          alive: false,
+          message: 'Connection error',
+          checkedAt: new Date(),
+        };
+      });
+      setPingResults(newResults);
+      setPingSummary({
+        total: ips.length,
+        alive: 0,
+        dead: ips.length,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      });
     } finally {
       setIsPingingAll(false);
     }
@@ -200,9 +231,26 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
             checkedAt: new Date(),
           },
         }));
+      } else {
+        setPingResults((prev) => ({
+          ...prev,
+          [ip]: {
+            alive: false,
+            message: data.error || 'Offline / No response',
+            checkedAt: new Date(),
+          },
+        }));
       }
     } catch (err) {
       console.error('Failed to ping IP:', err);
+      setPingResults((prev) => ({
+        ...prev,
+        [ip]: {
+          alive: false,
+          message: 'Connection failed',
+          checkedAt: new Date(),
+        },
+      }));
     } finally {
       setPingingSingleIp(null);
     }
@@ -221,7 +269,7 @@ export const SubscriberDetailModal: React.FC<SubscriberDetailModalProps> = ({
       success = await onDeleteDhcpLease(targetId, targetMac);
     } else {
       try {
-        const res = await fetch('/api/mikrotik/delete-lease', {
+        const res = await authFetch('/api/mikrotik/delete-lease', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ leaseId: targetId, macAddress: targetMac }),
