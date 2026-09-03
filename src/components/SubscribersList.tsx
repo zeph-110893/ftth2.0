@@ -134,8 +134,8 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
     if (statusFilter === 'inactive' && billingStatus !== 'inactive') return false;
     if (statusFilter === 'exclude' && billingStatus !== 'exclude') return false;
 
-    if (paymentFilter === 'paid' && unpaidCount > 0) return false;
-    if (paymentFilter === 'unpaid' && unpaidCount === 0) return false;
+    if (paymentFilter === 'paid' && (unpaidCount > 0 || sub.status === 'Inactive' || sub.status === 'Exclude')) return false;
+    if (paymentFilter === 'unpaid' && (unpaidCount === 0 || sub.status === 'Inactive' || sub.status === 'Exclude')) return false;
 
     if (vlanFilter === 'assigned' && (!sub.vlan || sub.vlan <= 0)) return false;
     if (vlanFilter === 'unassigned' && sub.vlan && sub.vlan > 0) return false;
@@ -552,7 +552,17 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
 
                       {/* Current Month Paid Status */}
                       <td className="py-3 px-3">
-                        {m.paidCurrent ? (
+                        {sub.status === 'Inactive' ? (
+                          <span className="inline-flex items-center gap-1 font-semibold text-slate-500 text-xs">
+                            <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xs font-bold">✕</span>
+                            <span>Inactive</span>
+                          </span>
+                        ) : sub.status === 'Exclude' ? (
+                          <span className="inline-flex items-center gap-1 font-semibold text-slate-400 text-xs">
+                            <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center text-xs font-bold">—</span>
+                            <span>Excluded</span>
+                          </span>
+                        ) : m.paidCurrent ? (
                           <span className="inline-flex items-center gap-1 font-bold text-teal-600 text-xs">
                             <span className="w-5 h-5 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-xs">✓</span>
                             <span>Paid</span>

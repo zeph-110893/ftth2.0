@@ -887,15 +887,23 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
               <span className="text-sm font-black font-mono text-emerald-600">{formatCurrency(totalPaidAmount)}</span>
             </div>
             <div className={`rounded-xl px-4 py-2.5 text-center min-w-[120px] border ${
-              unpaidMonths.length > 0
+              subscriber.status === 'Inactive'
+                ? 'bg-slate-100/80 border-slate-200 text-slate-600'
+                : subscriber.status === 'Exclude'
+                ? 'bg-slate-100/80 border-slate-200 text-slate-600'
+                : unpaidMonths.length > 0
                 ? 'bg-rose-50 border-rose-200 text-rose-700'
                 : 'bg-emerald-50 border-emerald-200 text-emerald-700'
             }`}>
               <span className="text-[10px] font-bold uppercase tracking-wider block opacity-75">
-                {unpaidMonths.length > 0 ? 'Unpaid Balance' : 'Account Balance'}
+                {subscriber.status === 'Inactive' ? 'Account Status' : subscriber.status === 'Exclude' ? 'Account Status' : unpaidMonths.length > 0 ? 'Unpaid Balance' : 'Account Balance'}
               </span>
               <span className="text-sm font-black font-mono">
-                {unpaidMonths.length > 0
+                {subscriber.status === 'Inactive'
+                  ? 'Inactive'
+                  : subscriber.status === 'Exclude'
+                  ? 'Excluded'
+                  : unpaidMonths.length > 0
                   ? formatCurrency(unpaidMonths.length * (subscriber.rate || 600))
                   : 'Fully Paid'}
               </span>
@@ -1697,11 +1705,25 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                 </div>
 
                 {unpaidMonths.length === 0 ? (
-                  <div className="p-8 text-center bg-emerald-50/50 rounded-xl border border-emerald-100">
-                    <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-1.5" />
-                    <p className="text-xs font-bold text-emerald-800">All bills up to date!</p>
-                    <p className="text-[11px] text-emerald-600 mt-0.5">No outstanding payments for this subscriber.</p>
-                  </div>
+                  subscriber.status === 'Inactive' ? (
+                    <div className="p-8 text-center bg-slate-50 rounded-xl border border-slate-200">
+                      <Clock className="w-8 h-8 text-slate-400 mx-auto mb-1.5" />
+                      <p className="text-xs font-bold text-slate-700">Inactive Subscriber</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">Unpaid billing months are not accrued for inactive accounts.</p>
+                    </div>
+                  ) : subscriber.status === 'Exclude' ? (
+                    <div className="p-8 text-center bg-slate-50 rounded-xl border border-slate-200">
+                      <Clock className="w-8 h-8 text-slate-400 mx-auto mb-1.5" />
+                      <p className="text-xs font-bold text-slate-700">Excluded Account</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">Billing tracking is excluded for this subscriber.</p>
+                    </div>
+                  ) : (
+                    <div className="p-8 text-center bg-emerald-50/50 rounded-xl border border-emerald-100">
+                      <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-1.5" />
+                      <p className="text-xs font-bold text-emerald-800">All bills up to date!</p>
+                      <p className="text-[11px] text-emerald-600 mt-0.5">No outstanding payments for this subscriber.</p>
+                    </div>
+                  )
                 ) : (
                   <div className="space-y-2">
                     {unpaidMonths.map((mStr) => {

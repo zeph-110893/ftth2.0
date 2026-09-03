@@ -634,13 +634,15 @@ async function startServer() {
       const diffTime = nextDueDateObj.getTime() - now.getTime();
       const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-      // Calculate unpaid months list (last 6 months back)
+      // Calculate unpaid months list (last 6 months back) - do not count for inactive or excluded subscribers
       const unpaidMonths: string[] = [];
-      for (let i = 0; i < 6; i++) {
-        const checkD = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const mStr = `${monthNames[checkD.getMonth()]} ${checkD.getFullYear()}`;
-        if (!monthsPaidSet.has(mStr)) {
-          unpaidMonths.push(mStr);
+      if (selectedSub.status !== 'Inactive' && selectedSub.status !== 'Exclude') {
+        for (let i = 0; i < 6; i++) {
+          const checkD = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          const mStr = `${monthNames[checkD.getMonth()]} ${checkD.getFullYear()}`;
+          if (!monthsPaidSet.has(mStr)) {
+            unpaidMonths.push(mStr);
+          }
         }
       }
       const unpaidTotal = unpaidMonths.length * (selectedSub.rate || 600);
