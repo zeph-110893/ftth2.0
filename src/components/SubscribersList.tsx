@@ -347,9 +347,10 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                 <th
                   onClick={() => handleSort('bandwidth')}
                   className="py-3.5 px-3 cursor-pointer hover:bg-slate-100/80 transition-colors group select-none"
+                  title="Bandwidth: Download (↓ Tx) | Upload (↑ Rx)"
                 >
                   <div className="flex items-center gap-1.5">
-                    <span>Bandwidth Usage</span>
+                    <span>Bandwidth (↓DL | ↑UL)</span>
                     {renderSortIcon('bandwidth')}
                   </div>
                 </th>
@@ -530,12 +531,12 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                           }
                           return (
                             <div className="flex items-center gap-1.5 whitespace-nowrap">
-                              <span className="text-teal-600 font-bold" title="Rx (Download)">
-                                ↓ {formatBytes(iface.rxByte)}
+                              <span className="text-teal-600 font-bold" title="Download (Tx to subscriber)">
+                                ↓ {formatBytes(iface.txByte)}
                               </span>
                               <span className="text-slate-300">|</span>
-                              <span className="text-cyan-600 font-bold" title="Tx (Upload)">
-                                ↑ {formatBytes(iface.txByte)}
+                              <span className="text-cyan-600 font-bold" title="Upload (Rx from subscriber)">
+                                ↑ {formatBytes(iface.rxByte)}
                               </span>
                             </div>
                           );

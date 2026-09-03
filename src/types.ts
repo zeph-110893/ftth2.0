@@ -175,8 +175,12 @@ export interface SubscriberPortalDevice {
 export interface SubscriberPortalBandwidth {
   rxByte: number;
   txByte: number;
+  downloadByte?: number;
+  uploadByte?: number;
   rxFormatted: string;
   txFormatted: string;
+  downloadFormatted?: string;
+  uploadFormatted?: string;
   totalFormatted: string;
   interfaceName: string;
   vlanId: number | null;

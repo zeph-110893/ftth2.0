@@ -491,25 +491,25 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
                   {/* Total Download */}
                   <div className="bg-gradient-to-br from-cyan-50/70 to-cyan-100/30 p-5 rounded-2xl border border-cyan-200/80">
                     <div className="flex items-center justify-between text-xs font-bold text-cyan-900 mb-1">
-                      <span className="uppercase tracking-wider">Total Downloaded (Rx)</span>
+                      <span className="uppercase tracking-wider">Total Downloaded (Tx)</span>
                       <ArrowDownCircle className="w-4 h-4 text-cyan-600" />
                     </div>
                     <div className="text-3xl font-black font-mono text-slate-900 mt-2">
-                      {data.bandwidth.rxFormatted}
+                      {data.bandwidth.downloadFormatted || data.bandwidth.txFormatted}
                     </div>
-                    <p className="text-[11px] text-cyan-700 mt-1 font-medium">Inbound traffic consumed</p>
+                    <p className="text-[11px] text-cyan-700 mt-1 font-medium">Inbound traffic received by device</p>
                   </div>
 
                   {/* Total Upload */}
                   <div className="bg-gradient-to-br from-emerald-50/70 to-emerald-100/30 p-5 rounded-2xl border border-emerald-200/80">
                     <div className="flex items-center justify-between text-xs font-bold text-emerald-900 mb-1">
-                      <span className="uppercase tracking-wider">Total Uploaded (Tx)</span>
+                      <span className="uppercase tracking-wider">Total Uploaded (Rx)</span>
                       <ArrowUpCircle className="w-4 h-4 text-emerald-600" />
                     </div>
                     <div className="text-3xl font-black font-mono text-slate-900 mt-2">
-                      {data.bandwidth.txFormatted}
+                      {data.bandwidth.uploadFormatted || data.bandwidth.rxFormatted}
                     </div>
-                    <p className="text-[11px] text-emerald-700 mt-1 font-medium">Outbound traffic transmitted</p>
+                    <p className="text-[11px] text-emerald-700 mt-1 font-medium">Outbound traffic sent by device</p>
                   </div>
 
                   {/* Total Combined */}

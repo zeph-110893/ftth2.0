@@ -46,6 +46,7 @@ import {
   getSubscriberDueDay,
   getUnassignedVlans,
   getInterfaceForSubscriber,
+  formatBytes,
 } from '../utils/billingUtils';
 import { authFetch, canWrite } from '../utils/auth';
 
@@ -1226,7 +1227,11 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                   </div>
                   <div className="text-[11px] text-slate-400 font-mono mt-0.5">
                     {subscriber.vlan
-                      ? `Subnet: 172.16.${subscriber.vlan}.0/24 ${matchedIface?.name ? `• ${matchedIface.name}` : ''}`
+                      ? `Subnet: 172.16.${subscriber.vlan}.0/24 ${matchedIface?.name ? `• ${matchedIface.name}` : ''} ${
+                          matchedIface && (matchedIface.rxByte || matchedIface.txByte)
+                            ? `(↓ DL: ${formatBytes(matchedIface.txByte)} | ↑ UL: ${formatBytes(matchedIface.rxByte)})`
+                            : ''
+                        }`
                       : 'No RouterOS VLAN mapped to this subscriber.'}
                   </div>
                 </div>

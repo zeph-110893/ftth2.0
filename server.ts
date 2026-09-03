@@ -667,24 +667,33 @@ async function startServer() {
         });
       }
 
-      // Calculate or simulate realistic Rx/Tx bytes
+      // On MikroTik router interfaces:
+      // Router Tx (transmit out to subscriber) = Subscriber Download
+      // Router Rx (receive in from subscriber) = Subscriber Upload
       let rxByte = targetIface ? (targetIface.rxByte || 0) : 0;
       let txByte = targetIface ? (targetIface.txByte || 0) : 0;
 
-      // Provide realistic default telemetry if in container/mock environment without live router traffic
+      // Provide realistic default telemetry if in container/mock environment without live router traffic:
+      // Subscriber download (Tx) is higher (~12.5 GB), subscriber upload (Rx) is lower (~2.8 GB)
       if (rxByte === 0 && txByte === 0) {
         const baseSeed = ((selectedSub.id || 1) * 137 + (now.getDate() * 41)) % 100;
-        rxByte = Math.floor((12.5 + baseSeed * 0.35) * 1024 * 1024 * 1024);
-        txByte = Math.floor((2.8 + baseSeed * 0.08) * 1024 * 1024 * 1024);
+        txByte = Math.floor((12.5 + baseSeed * 0.35) * 1024 * 1024 * 1024);
+        rxByte = Math.floor((2.8 + baseSeed * 0.08) * 1024 * 1024 * 1024);
       }
 
       const totalByte = rxByte + txByte;
+      const downloadByte = txByte;
+      const uploadByte = rxByte;
 
       const bandwidth = {
         rxByte,
         txByte,
+        downloadByte,
+        uploadByte,
         rxFormatted: formatBytesStr(rxByte),
         txFormatted: formatBytesStr(txByte),
+        downloadFormatted: formatBytesStr(downloadByte),
+        uploadFormatted: formatBytesStr(uploadByte),
         totalFormatted: formatBytesStr(totalByte),
         interfaceName: targetIface?.name || `vlan-${targetVlan || 100}`,
         vlanId: targetVlan,
