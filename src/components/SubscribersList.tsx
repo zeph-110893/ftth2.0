@@ -125,7 +125,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
     }
   };
 
-  const handleOpenPaymentConfirm = (sub: Subscriber, e?: React.MouseEvent, defaultMonthCount: number = 0) => {
+  const handleOpenPaymentConfirm = (sub: Subscriber, e?: React.MouseEvent) => {
     if (e) {
       e.stopPropagation();
     }
@@ -134,41 +134,25 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
     const unpaid = getUnpaidMonths(sub, payments);
     const candidates = getCandidatePayableMonths(sub, payments, 6);
 
+    let initialAvailable: string[] = [];
     let initialSelected: string[] = [];
-    if (defaultMonthCount > 0) {
-      initialSelected = candidates.slice(0, defaultMonthCount);
-    } else if (unpaid.length >= 2) {
-      initialSelected = [...unpaid];
-    } else if (unpaid.length === 1) {
+
+    if (unpaid.length > 0) {
+      initialAvailable = [...unpaid];
       initialSelected = [...unpaid];
     } else {
-      initialSelected = candidates.slice(0, 1);
+      const nextM = candidates[0] || getNextMonthStr(CURRENT_MONTH);
+      initialAvailable = [nextM];
+      initialSelected = [nextM];
     }
 
     setPaymentConfirmTarget({
       subscriber: sub,
-      availableMonths: candidates,
+      availableMonths: initialAvailable,
       unpaidMonths: unpaid,
       selectedMonths: initialSelected,
       referenceNo: '',
       method: 'Cash',
-    });
-  };
-
-  const handleSelectPresetMonths = (count: number) => {
-    if (!paymentConfirmTarget) return;
-    const months = [...paymentConfirmTarget.availableMonths];
-    while (months.length < count) {
-      const last = months[months.length - 1] || CURRENT_MONTH;
-      const nextMonth = getNextMonthStr(last);
-      if (!months.includes(nextMonth)) {
-        months.push(nextMonth);
-      }
-    }
-    setPaymentConfirmTarget({
-      ...paymentConfirmTarget,
-      availableMonths: months,
-      selectedMonths: months.slice(0, count),
     });
   };
 
@@ -722,9 +706,9 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                           <button
                             type="button"
                             disabled={isReadOnly}
-                            onClick={(e) => handleOpenPaymentConfirm(sub, e, 2)}
+                            onClick={(e) => handleOpenPaymentConfirm(sub, e)}
                             className="inline-flex items-center gap-1.5 font-bold text-teal-700 bg-teal-50 hover:bg-teal-100/90 px-2.5 py-1 rounded-lg border border-teal-200/80 hover:border-teal-300 text-xs transition-all cursor-pointer group/paid"
-                            title={isReadOnly ? 'Paid' : 'Current cycle paid. Click to accept advance payment (e.g. 2 months)'}
+                            title={isReadOnly ? 'Paid' : 'Current cycle paid. Click to accept advance payment'}
                           >
                             <span className="w-4 h-4 rounded-full bg-teal-200 text-teal-800 flex items-center justify-center text-[10px] font-bold">✓</span>
                             <span>Paid</span>
@@ -852,78 +836,30 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                   <span className="font-bold text-slate-700">
                     Billing Cycle(s) to Mark Paid:
                   </span>
-                  {paymentConfirmTarget.availableMonths.length > 1 && (
+                  <div className="flex items-center gap-3">
                     <button
                       type="button"
-                      onClick={() =>
-                        handleSelectAllMonths(
-                          paymentConfirmTarget.selectedMonths.length !== paymentConfirmTarget.availableMonths.length
-                        )
-                      }
-                      className="text-[11px] font-semibold text-cyan-600 hover:text-cyan-700 cursor-pointer"
+                      onClick={handleAddAdvanceMonthToModal}
+                      className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer flex items-center gap-1"
                     >
-                      {paymentConfirmTarget.selectedMonths.length === paymentConfirmTarget.availableMonths.length
-                        ? 'Deselect All'
-                        : 'Select All'}
+                      <span>+ Add Advance Month</span>
                     </button>
-                  )}
-                </div>
-
-                {/* Quick Duration Presets */}
-                <div className="flex items-center gap-1.5 flex-wrap px-1 pb-0.5">
-                  <span className="text-[11px] font-semibold text-slate-500 mr-1">Quick Presets:</span>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectPresetMonths(1)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-                      paymentConfirmTarget.selectedMonths.length === 1
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    1 Month
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectPresetMonths(2)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
-                      paymentConfirmTarget.selectedMonths.length === 2
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs ring-2 ring-emerald-500/20'
-                        : 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
-                    }`}
-                  >
-                    2 Months
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectPresetMonths(3)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-                      paymentConfirmTarget.selectedMonths.length === 3
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    3 Months
-                  </button>
-                  {paymentConfirmTarget.unpaidMonths.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPaymentConfirmTarget({
-                          ...paymentConfirmTarget,
-                          selectedMonths: [...paymentConfirmTarget.unpaidMonths],
-                        })
-                      }
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
-                        paymentConfirmTarget.selectedMonths.length === paymentConfirmTarget.unpaidMonths.length &&
-                        paymentConfirmTarget.unpaidMonths.every((m) => paymentConfirmTarget.selectedMonths.includes(m))
-                          ? 'bg-amber-600 text-white border-amber-600'
-                          : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                      }`}
-                    >
-                      All Due ({paymentConfirmTarget.unpaidMonths.length})
-                    </button>
-                  )}
+                    {paymentConfirmTarget.availableMonths.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleSelectAllMonths(
+                            paymentConfirmTarget.selectedMonths.length !== paymentConfirmTarget.availableMonths.length
+                          )
+                        }
+                        className="text-[11px] font-semibold text-cyan-600 hover:text-cyan-700 cursor-pointer"
+                      >
+                        {paymentConfirmTarget.selectedMonths.length === paymentConfirmTarget.availableMonths.length
+                          ? 'Deselect All'
+                          : 'Select All'}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">

@@ -287,15 +287,6 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
     }
   };
 
-  const handleSelectDuration = (count: number) => {
-    if (isReadOnly) return;
-    const pool = getCandidatePayableMonths(subscriber, payments, Math.max(count + 2, 6));
-    const targetMonths = pool.slice(0, count);
-    const extra = targetMonths.filter((m) => !unpaidMonths.includes(m));
-    setAdvancePayMonths((prev) => Array.from(new Set([...prev, ...extra])));
-    setSelectedUnpaid(targetMonths);
-  };
-
   const handleAddAdvanceMonth = () => {
     if (isReadOnly) return;
     const pool = getCandidatePayableMonths(subscriber, payments, 12);
@@ -1739,62 +1730,26 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
               <div className="p-5 space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Unpaid & Payable Months</span>
-                  {allPayableMonths.length > 0 && !isReadOnly && (
-                    <button
-                      onClick={handleToggleSelectAll}
-                      className="text-xs font-semibold text-cyan-600 hover:underline cursor-pointer"
-                    >
-                      {selectedUnpaid.length === allPayableMonths.length ? 'Deselect All' : 'Select All'}
-                    </button>
-                  )}
-                </div>
-
-                {/* Quick Multi-Month Duration Buttons */}
-                {!isReadOnly && subscriber.status !== 'Inactive' && subscriber.status !== 'Exclude' && (
-                  <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                    <span className="text-[11px] font-semibold text-slate-500 mr-1">Quick Pay:</span>
-                    <button
-                      type="button"
-                      onClick={() => handleSelectDuration(1)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-                        selectedUnpaid.length === 1
-                          ? 'bg-cyan-600 text-white border-cyan-600 shadow-2xs'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      1 Month
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSelectDuration(2)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
-                        selectedUnpaid.length === 2
-                          ? 'bg-cyan-600 text-white border-cyan-600 shadow-2xs ring-2 ring-cyan-500/20'
-                          : 'bg-cyan-50 text-cyan-800 border-cyan-300 hover:bg-cyan-100'
-                      }`}
-                    >
-                      2 Months
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSelectDuration(3)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-                        selectedUnpaid.length === 3
-                          ? 'bg-cyan-600 text-white border-cyan-600 shadow-2xs'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      3 Months
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleAddAdvanceMonth}
-                      className="px-2.5 py-1 rounded-lg text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-all cursor-pointer"
-                    >
-                      + Add Advance Month
-                    </button>
+                  <div className="flex items-center gap-3">
+                    {!isReadOnly && subscriber.status !== 'Inactive' && subscriber.status !== 'Exclude' && (
+                      <button
+                        type="button"
+                        onClick={handleAddAdvanceMonth}
+                        className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer flex items-center gap-1"
+                      >
+                        <span>+ Add Advance Month</span>
+                      </button>
+                    )}
+                    {allPayableMonths.length > 0 && !isReadOnly && (
+                      <button
+                        onClick={handleToggleSelectAll}
+                        className="text-xs font-semibold text-cyan-600 hover:underline cursor-pointer"
+                      >
+                        {selectedUnpaid.length === allPayableMonths.length ? 'Deselect All' : 'Select All'}
+                      </button>
+                    )}
                   </div>
-                )}
+                </div>
 
                 {allPayableMonths.length === 0 ? (
                   subscriber.status === 'Inactive' ? (
@@ -1817,20 +1772,13 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                         <p className="text-[11px] text-emerald-600 mt-0.5">No outstanding overdue payments for this subscriber.</p>
                       </div>
                       {!isReadOnly && (
-                        <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
+                        <div className="flex items-center justify-center pt-1">
                           <button
                             type="button"
-                            onClick={() => handleSelectDuration(1)}
-                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-2xs cursor-pointer transition-colors"
+                            onClick={handleAddAdvanceMonth}
+                            className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-2xs cursor-pointer transition-colors flex items-center gap-1.5"
                           >
-                            Pay 1 Month ({formatCurrency(subscriber.rate || 600)})
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleSelectDuration(2)}
-                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-700 hover:bg-emerald-600 text-white shadow-2xs cursor-pointer transition-colors"
-                          >
-                            Pay 2 Months ({formatCurrency((subscriber.rate || 600) * 2)})
+                            <span>+ Add Advance Month</span>
                           </button>
                         </div>
                       )}
