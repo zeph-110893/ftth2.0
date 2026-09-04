@@ -5,7 +5,6 @@ import { TODAY, parseDateSafe, capitalizeWords, getUnassignedVlans } from '../ut
 
 interface AddSubscriberModalProps {
   isOpen: boolean;
-  editingSubscriber?: Subscriber | null;
   subscribers?: Subscriber[];
   mikrotikInterfaces?: MikroTikInterface[];
   onClose: () => void;
@@ -13,22 +12,7 @@ interface AddSubscriberModalProps {
   nextId: number;
 }
 
-const getInitialDueDate = (sub?: Subscriber | null) => {
-  if (sub?.dueRaw) {
-    const d = parseDateSafe(sub.dueRaw);
-    if (d) {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${y}-${m}-${day}`;
-    }
-  }
-  if (sub?.dueDay) {
-    const y = TODAY.year;
-    const m = String(TODAY.monthIdx + 1).padStart(2, '0');
-    const day = String(sub.dueDay).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }
+const getInitialDueDate = () => {
   const y = TODAY.year;
   const m = String(TODAY.monthIdx + 1).padStart(2, '0');
   const day = String(TODAY.day).padStart(2, '0');
@@ -37,7 +21,6 @@ const getInitialDueDate = (sub?: Subscriber | null) => {
 
 export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
   isOpen,
-  editingSubscriber,
   subscribers = [],
   mikrotikInterfaces = [],
   onClose,
@@ -56,37 +39,22 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
   const [address, setAddress] = useState('');
   const [macAddress, setMacAddress] = useState('');
 
-  const unassignedVlans = getUnassignedVlans(subscribers, mikrotikInterfaces, editingSubscriber?.vlan);
+  const unassignedVlans = getUnassignedVlans(subscribers, mikrotikInterfaces);
 
   useEffect(() => {
     if (!isOpen) return;
-    if (editingSubscriber) {
-      setFirstName(editingSubscriber.first);
-      setLastName(editingSubscriber.last);
-      setRate(editingSubscriber.rate);
-      setDueDate(getInitialDueDate(editingSubscriber));
-      setStatus(editingSubscriber.status);
-      const subVlan = editingSubscriber.vlan ?? null;
-      setVlan(subVlan);
-      setCustomVlanInput(subVlan ? String(subVlan) : '');
-      setIsCustomVlan(false);
-      setPhone(editingSubscriber.phone || '');
-      setAddress(editingSubscriber.address || '');
-      setMacAddress(editingSubscriber.macAddress || '');
-    } else {
-      setFirstName('');
-      setLastName('');
-      setRate(600);
-      setDueDate(getInitialDueDate(null));
-      setStatus('Active');
-      setVlan(null);
-      setCustomVlanInput('');
-      setIsCustomVlan(false);
-      setPhone('');
-      setAddress('');
-      setMacAddress('');
-    }
-  }, [editingSubscriber, isOpen]);
+    setFirstName('');
+    setLastName('');
+    setRate(600);
+    setDueDate(getInitialDueDate());
+    setStatus('Active');
+    setVlan(null);
+    setCustomVlanInput('');
+    setIsCustomVlan(false);
+    setPhone('');
+    setAddress('');
+    setMacAddress('');
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -109,7 +77,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
       : vlan;
 
     const newSub: Subscriber = {
-      id: editingSubscriber ? editingSubscriber.id : nextId,
+      id: nextId,
       first: capitalizeWords(firstName),
       last: capitalizeWords(lastName),
       rate: Number(rate) || 600,
@@ -137,7 +105,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
           <div className="flex items-center gap-2">
             <UserPlus className="w-5 h-5 text-cyan-400" />
             <h2 className="text-base font-bold">
-              {editingSubscriber ? `Edit Subscriber #${editingSubscriber.id}` : `Add New Subscriber (#${nextId})`}
+              Add New Subscriber (#{nextId})
             </h2>
           </div>
           <button
@@ -349,7 +317,7 @@ export const AddSubscriberModal: React.FC<AddSubscriberModalProps> = ({
               className="inline-flex items-center gap-1.5 px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg transition-colors shadow-2xs cursor-pointer"
             >
               <Save className="w-4 h-4" />
-              <span>{editingSubscriber ? 'Update Subscriber' : 'Save Subscriber'}</span>
+              <span>Save Subscriber</span>
             </button>
           </div>
         </form>

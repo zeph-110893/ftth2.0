@@ -230,7 +230,6 @@ export default function App() {
   // Modal & View states
   const [selectedSubDetail, setSelectedSubDetail] = useState<Subscriber | null>(null);
   const [isAddSubOpen, setIsAddSubOpen] = useState(false);
-  const [editingSub, setEditingSub] = useState<Subscriber | null>(null);
 
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -471,10 +470,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-100/90 text-slate-800 flex flex-col font-sans antialiased selection:bg-cyan-500 selection:text-white">
       {/* App Header */}
       <Header
-        onAddSubscriber={() => {
-          setEditingSub(null);
-          setIsAddSubOpen(true);
-        }}
+        onAddSubscriber={() => setIsAddSubOpen(true)}
         onAddExpense={() => {
           setEditingExpense(null);
           setIsAddExpenseOpen(true);
@@ -536,10 +532,6 @@ export default function App() {
             onDeleteDhcpLease={handleDeleteDhcpLease}
             onAddPayment={handleSavePayment}
             onDeletePayment={handleDeletePayment}
-            onOpenEditModal={(sub) => {
-              setEditingSub(sub);
-              setIsAddSubOpen(true);
-            }}
           />
         ) : (
           <>
@@ -551,10 +543,7 @@ export default function App() {
                 mikrotikInterfaces={mikrotikInterfaces}
                 currentUser={currentUser}
                 onSelectSubscriber={(sub) => handleSelectSubscriber(sub)}
-                onAddSubscriber={() => {
-                  setEditingSub(null);
-                  setIsAddSubOpen(true);
-                }}
+                onAddSubscriber={() => setIsAddSubOpen(true)}
                 onRefreshData={fetchData}
                 onAddPayment={handleSavePayment}
               />
@@ -614,13 +603,9 @@ export default function App() {
       {/* Modals & Drawers */}
       <AddSubscriberModal
         isOpen={isAddSubOpen}
-        editingSubscriber={editingSub}
         subscribers={subscribers}
         mikrotikInterfaces={mikrotikInterfaces}
-        onClose={() => {
-          setIsAddSubOpen(false);
-          setEditingSub(null);
-        }}
+        onClose={() => setIsAddSubOpen(false)}
         onSaveSubscriber={handleSaveSubscriber}
         nextId={nextSubId}
       />

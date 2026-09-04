@@ -67,7 +67,6 @@ interface SubscriberDetailPageProps {
   onDeleteDhcpLease?: (leaseId: string, macAddress?: string) => Promise<boolean>;
   onAddPayment: (payment: PaymentRecord) => void;
   onDeletePayment: (ts: string, subId: number, month: string) => void;
-  onOpenEditModal: (sub: Subscriber) => void;
 }
 
 export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
@@ -84,7 +83,6 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
   onDeleteDhcpLease,
   onAddPayment,
   onDeletePayment,
-  onOpenEditModal,
 }) => {
   const isReadOnly = !canWrite(currentUser);
   const [selectedUnpaid, setSelectedUnpaid] = useState<string[]>([]);
@@ -790,16 +788,6 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
             <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
             <span className="hidden sm:inline">Open in New Tab</span>
           </a>
-
-          {!isReadOnly && (
-            <button
-              onClick={() => onOpenEditModal(subscriber)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 shadow-2xs transition-colors cursor-pointer"
-            >
-              <Edit2 className="w-3.5 h-3.5 text-cyan-600" />
-              <span>Edit Profile</span>
-            </button>
-          )}
 
           {!isReadOnly && (
             <button
