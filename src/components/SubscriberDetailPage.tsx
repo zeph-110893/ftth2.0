@@ -47,6 +47,9 @@ import {
   getUnassignedVlans,
   getInterfaceForSubscriber,
   formatBytes,
+  getCandidatePayableMonths,
+  CURRENT_MONTH,
+  keyToMonthStr,
 } from '../utils/billingUtils';
 import { authFetch, canWrite } from '../utils/auth';
 
@@ -85,6 +88,9 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
 }) => {
   const isReadOnly = !canWrite(currentUser);
   const [selectedUnpaid, setSelectedUnpaid] = useState<string[]>([]);
+  const [advancePayMonths, setAdvancePayMonths] = useState<string[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState<string>('Cash');
+  const [paymentRefNo, setPaymentRefNo] = useState<string>('');
   const [showHistory, setShowHistory] = useState(false);
 
   // State for VLAN Assignment & inline editing
@@ -172,6 +178,8 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
     setIsEditingName(false);
     setIsEditingDue(false);
     setSelectedUnpaid([]);
+    setAdvancePayMonths([]);
+    setPaymentRefNo('');
     setVlanToggleMsg(null);
     setLeaseDeleteMsg(null);
     setPingResults({});
@@ -261,11 +269,13 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
     return `${parts[0].slice(0, 3)} ${parts[1]}`;
   };
 
+  const allPayableMonths = Array.from(new Set([...unpaidMonths, ...advancePayMonths]));
+
   const handleToggleSelectAll = () => {
-    if (selectedUnpaid.length === unpaidMonths.length) {
+    if (selectedUnpaid.length === allPayableMonths.length) {
       setSelectedUnpaid([]);
     } else {
-      setSelectedUnpaid([...unpaidMonths]);
+      setSelectedUnpaid([...allPayableMonths]);
     }
   };
 
@@ -277,18 +287,43 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
     }
   };
 
+  const handleSelectDuration = (count: number) => {
+    if (isReadOnly) return;
+    const pool = getCandidatePayableMonths(subscriber, payments, Math.max(count + 2, 6));
+    const targetMonths = pool.slice(0, count);
+    const extra = targetMonths.filter((m) => !unpaidMonths.includes(m));
+    setAdvancePayMonths((prev) => Array.from(new Set([...prev, ...extra])));
+    setSelectedUnpaid(targetMonths);
+  };
+
+  const handleAddAdvanceMonth = () => {
+    if (isReadOnly) return;
+    const pool = getCandidatePayableMonths(subscriber, payments, 12);
+    const existing = new Set([...unpaidMonths, ...advancePayMonths]);
+    const nextCandidate = pool.find((m) => !existing.has(m));
+    if (nextCandidate) {
+      setAdvancePayMonths((prev) => [...prev, nextCandidate]);
+      setSelectedUnpaid((prev) => Array.from(new Set([...prev, nextCandidate])));
+    }
+  };
+
   const handleMarkPaid = () => {
     if (selectedUnpaid.length === 0 || isReadOnly) return;
+    const nowTs = new Date().toLocaleString();
     selectedUnpaid.forEach((mStr) => {
       const newRecord: PaymentRecord = {
         sub: subscriber.id,
         month: mStr,
         amount: subscriber.rate || 600,
-        ts: new Date().toLocaleString(),
+        ts: nowTs,
+        method: (paymentMethod || 'Cash') as any,
+        referenceNo: paymentRefNo.trim() || undefined,
       };
       onAddPayment(newRecord);
     });
     setSelectedUnpaid([]);
+    setAdvancePayMonths([]);
+    setPaymentRefNo('');
   };
 
   const handleSingleMonthPay = (mStr: string) => {
@@ -298,9 +333,12 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
       month: mStr,
       amount: subscriber.rate || 600,
       ts: new Date().toLocaleString(),
+      method: (paymentMethod || 'Cash') as any,
+      referenceNo: paymentRefNo.trim() || undefined,
     };
     onAddPayment(newRecord);
     setSelectedUnpaid((prev) => prev.filter((m) => m !== mStr));
+    setAdvancePayMonths((prev) => prev.filter((m) => m !== mStr));
   };
 
   const handleSaveRate = () => {
@@ -906,6 +944,8 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                   ? 'Excluded'
                   : unpaidMonths.length > 0
                   ? formatCurrency(unpaidMonths.length * (subscriber.rate || 600))
+                  : metrics.advancePaidCount && metrics.advancePaidCount > 0
+                  ? `Paid (+${metrics.advancePaidCount} mo)`
                   : 'Fully Paid'}
               </span>
             </div>
@@ -1698,18 +1738,65 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
             {!showHistory && (
               <div className="p-5 space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Unpaid Months</span>
-                  {unpaidMonths.length > 0 && !isReadOnly && (
+                  <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Unpaid & Payable Months</span>
+                  {allPayableMonths.length > 0 && !isReadOnly && (
                     <button
                       onClick={handleToggleSelectAll}
                       className="text-xs font-semibold text-cyan-600 hover:underline cursor-pointer"
                     >
-                      {selectedUnpaid.length === unpaidMonths.length ? 'Deselect All' : 'Select All'}
+                      {selectedUnpaid.length === allPayableMonths.length ? 'Deselect All' : 'Select All'}
                     </button>
                   )}
                 </div>
 
-                {unpaidMonths.length === 0 ? (
+                {/* Quick Multi-Month Duration Buttons */}
+                {!isReadOnly && subscriber.status !== 'Inactive' && subscriber.status !== 'Exclude' && (
+                  <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                    <span className="text-[11px] font-semibold text-slate-500 mr-1">Quick Pay:</span>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectDuration(1)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                        selectedUnpaid.length === 1
+                          ? 'bg-cyan-600 text-white border-cyan-600 shadow-2xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      1 Month
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectDuration(2)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                        selectedUnpaid.length === 2
+                          ? 'bg-cyan-600 text-white border-cyan-600 shadow-2xs ring-2 ring-cyan-500/20'
+                          : 'bg-cyan-50 text-cyan-800 border-cyan-300 hover:bg-cyan-100'
+                      }`}
+                    >
+                      2 Months
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectDuration(3)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                        selectedUnpaid.length === 3
+                          ? 'bg-cyan-600 text-white border-cyan-600 shadow-2xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      3 Months
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAddAdvanceMonth}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-all cursor-pointer"
+                    >
+                      + Add Advance Month
+                    </button>
+                  </div>
+                )}
+
+                {allPayableMonths.length === 0 ? (
                   subscriber.status === 'Inactive' ? (
                     <div className="p-8 text-center bg-slate-50 rounded-xl border border-slate-200">
                       <Clock className="w-8 h-8 text-slate-400 mx-auto mb-1.5" />
@@ -1723,16 +1810,38 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                       <p className="text-[11px] text-slate-500 mt-0.5">Billing tracking is excluded for this subscriber.</p>
                     </div>
                   ) : (
-                    <div className="p-8 text-center bg-emerald-50/50 rounded-xl border border-emerald-100">
-                      <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-1.5" />
-                      <p className="text-xs font-bold text-emerald-800">All bills up to date!</p>
-                      <p className="text-[11px] text-emerald-600 mt-0.5">No outstanding payments for this subscriber.</p>
+                    <div className="p-6 text-center bg-emerald-50/50 rounded-xl border border-emerald-100 space-y-3">
+                      <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
+                      <div>
+                        <p className="text-xs font-bold text-emerald-800">All bills up to date!</p>
+                        <p className="text-[11px] text-emerald-600 mt-0.5">No outstanding overdue payments for this subscriber.</p>
+                      </div>
+                      {!isReadOnly && (
+                        <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => handleSelectDuration(1)}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-2xs cursor-pointer transition-colors"
+                          >
+                            Pay 1 Month ({formatCurrency(subscriber.rate || 600)})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSelectDuration(2)}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-700 hover:bg-emerald-600 text-white shadow-2xs cursor-pointer transition-colors"
+                          >
+                            Pay 2 Months ({formatCurrency((subscriber.rate || 600) * 2)})
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )
                 ) : (
                   <div className="space-y-2">
-                    {unpaidMonths.map((mStr) => {
+                    {allPayableMonths.map((mStr) => {
                       const isSelected = selectedUnpaid.includes(mStr);
+                      const isUnpaid = unpaidMonths.includes(mStr);
+                      const isCurrent = mStr === CURRENT_MONTH;
                       return (
                         <div
                           key={mStr}
@@ -1752,8 +1861,25 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                               />
                             )}
                             <div>
-                              <span className="text-xs font-bold">{mStr}</span>
-                              <span className="text-[11px] text-slate-400 ml-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold">{mStr}</span>
+                                {isUnpaid && !isCurrent && (
+                                  <span className="text-[10px] px-1.5 py-0.2 bg-rose-100 text-rose-800 rounded font-semibold">
+                                    Overdue
+                                  </span>
+                                )}
+                                {isUnpaid && isCurrent && (
+                                  <span className="text-[10px] px-1.5 py-0.2 bg-cyan-100 text-cyan-800 rounded font-semibold">
+                                    Due (Current)
+                                  </span>
+                                )}
+                                {!isUnpaid && (
+                                  <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded font-semibold">
+                                    Advance
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-slate-400">
                                 Due: {formatMonthShort(mStr)} {getSubscriberDueDay(subscriber)}
                               </span>
                             </div>
@@ -1778,27 +1904,55 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                       );
                     })}
 
-                    {/* Bulk Action Footer */}
+                    {/* Bulk Action & Payment Details Footer */}
                     {!isReadOnly && (
-                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                        <span className="text-xs text-slate-500 font-medium">
-                          {selectedUnpaid.length > 0
-                            ? `${selectedUnpaid.length} month(s) selected (${formatCurrency(selectedUnpaid.length * (subscriber.rate || 600))})`
-                            : 'Select multiple months to mark as paid together'}
-                        </span>
-                        <button
-                          onClick={handleMarkPaid}
-                          disabled={selectedUnpaid.length === 0}
-                          className={`px-4 py-2 text-xs font-bold rounded-xl transition-colors ${
-                            selectedUnpaid.length > 0
-                              ? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-xs cursor-pointer'
-                              : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                          }`}
-                        >
-                          {selectedUnpaid.length > 0
-                            ? `Mark Selected Paid (${formatCurrency(selectedUnpaid.length * (subscriber.rate || 600))})`
-                            : 'Mark Paid'}
-                        </button>
+                      <div className="pt-3 border-t border-slate-100 space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                          <div className="flex items-center gap-2">
+                            <label className="text-[11px] font-semibold text-slate-600 shrink-0">Method:</label>
+                            <select
+                              value={paymentMethod}
+                              onChange={(e) => setPaymentMethod(e.target.value)}
+                              className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs bg-white focus:ring-1 focus:ring-cyan-500 focus:outline-hidden"
+                            >
+                              <option value="Cash">Cash</option>
+                              <option value="GCash">GCash</option>
+                              <option value="Maya">Maya</option>
+                              <option value="Bank Transfer">Bank Transfer</option>
+                            </select>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <label className="text-[11px] font-semibold text-slate-600 shrink-0">Ref/OR #:</label>
+                            <input
+                              type="text"
+                              value={paymentRefNo}
+                              onChange={(e) => setPaymentRefNo(e.target.value)}
+                              placeholder="Optional reference"
+                              className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs bg-white focus:ring-1 focus:ring-cyan-500 focus:outline-hidden font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-xs text-slate-600 font-medium">
+                            {selectedUnpaid.length > 0
+                              ? `${selectedUnpaid.length} month(s) selected: ${formatCurrency(selectedUnpaid.length * (subscriber.rate || 600))}`
+                              : 'Select 1 or more months (e.g. 2 months) to mark as paid together'}
+                          </span>
+                          <button
+                            onClick={handleMarkPaid}
+                            disabled={selectedUnpaid.length === 0}
+                            className={`px-4 py-2 text-xs font-bold rounded-xl transition-colors ${
+                              selectedUnpaid.length > 0
+                                ? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-xs cursor-pointer'
+                                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                            }`}
+                          >
+                            {selectedUnpaid.length > 0
+                              ? `Mark Paid (${formatCurrency(selectedUnpaid.length * (subscriber.rate || 600))})`
+                              : 'Mark Paid'}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>

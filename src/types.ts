@@ -41,6 +41,7 @@ export interface SubCalculatedData {
   missed: number; // missed months count on record
   totalPaid: number;
   gap: number; // months gap from last paid month to current month
+  advancePaidCount?: number;
 }
 
 export interface Expense {

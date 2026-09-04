@@ -58,6 +58,19 @@ export function formatDueDate(sub: Subscriber): string {
   return 'N/A';
 }
 
+export function keyToMonthStr(k: number): string {
+  if (!k || k <= 0) return CURRENT_MONTH;
+  const year = Math.floor(k / 12);
+  const monthIdx = ((k % 12) + 12) % 12;
+  return `${MONTH_NAMES[monthIdx]} ${year}`;
+}
+
+export function getNextMonthStr(m: string): string {
+  const k = mkey(m);
+  if (!k) return CURRENT_MONTH;
+  return keyToMonthStr(k + 1);
+}
+
 export function mkey(m: string): number {
   if (!m) return 0;
   const parts = m.trim().split(" ");
@@ -168,6 +181,7 @@ export function calculateSubMetrics(
   const statusPill = getSubscriberBillingStatus(sub, allPayments);
 
   const totalPaid = entries.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+  const advancePaidCount = Array.from(paidKeys).filter((k) => k > currentKey).length;
 
   return {
     id: sub.id,
@@ -181,7 +195,8 @@ export function calculateSubMetrics(
     paidCurrent,
     missed,
     totalPaid,
-    gap
+    gap,
+    advancePaidCount,
   };
 }
 
@@ -233,6 +248,60 @@ export function getUnpaidMonths(sub: Subscriber, allPayments: PaymentRecord[]): 
   }
 
   return unpaid;
+}
+
+/**
+ * Returns candidate payable months for a subscriber:
+ * Starts with unpaid due months (chronologically: oldest first),
+ * followed by upcoming future/advance months, ensuring at least `desiredCount` months are available.
+ */
+export function getCandidatePayableMonths(
+  sub: Subscriber,
+  allPayments: PaymentRecord[],
+  desiredCount: number = 6
+): string[] {
+  if (!sub) return [CURRENT_MONTH];
+  const unpaid = getUnpaidMonths(sub, allPayments);
+  // Sort chronologically (oldest unpaid first)
+  const sortedUnpaid = [...unpaid].sort((a, b) => mkey(a) - mkey(b));
+
+  const entries = allPayments.filter((p) => Number(p.sub) === Number(sub.id));
+  const paidKeys = new Set(entries.map((p) => mkey(p.month)).filter((k) => k > 0));
+
+  const candidateKeys: number[] = [];
+
+  // 1. Add all unpaid due months
+  for (const m of sortedUnpaid) {
+    const k = mkey(m);
+    if (!candidateKeys.includes(k)) {
+      candidateKeys.push(k);
+    }
+  }
+
+  // 2. Determine start for upcoming/advance months
+  let startAfterKey = CURRENT_KEY;
+  if (candidateKeys.length > 0) {
+    startAfterKey = Math.max(...candidateKeys);
+  } else if (paidKeys.size > 0) {
+    startAfterKey = Math.max(...Array.from(paidKeys), CURRENT_KEY);
+  }
+
+  // If CURRENT_KEY is neither in candidateKeys nor in paidKeys, insert it
+  if (candidateKeys.length === 0 && !paidKeys.has(CURRENT_KEY)) {
+    candidateKeys.push(CURRENT_KEY);
+    startAfterKey = CURRENT_KEY;
+  }
+
+  // 3. Append upcoming future months until desiredCount is reached
+  let nextK = candidateKeys.length > 0 ? Math.max(...candidateKeys) + 1 : startAfterKey + 1;
+  while (candidateKeys.length < desiredCount) {
+    if (!paidKeys.has(nextK)) {
+      candidateKeys.push(nextK);
+    }
+    nextK++;
+  }
+
+  return candidateKeys.map((k) => keyToMonthStr(k));
 }
 
 export function getSubscriberBillingStatus(sub: Subscriber, allPayments: PaymentRecord[]): 'active' | 'due' | 'overdue' | 'inactive' | 'exclude' {
