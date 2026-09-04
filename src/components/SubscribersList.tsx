@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Plus, UserCheck, ArrowUpDown, ArrowUp, ArrowDown, Wifi, ShieldAlert, AlertTriangle, CheckCircle2, X, Ban, Network, RefreshCw, ExternalLink } from 'lucide-react';
+import { Search, Plus, UserCheck, ArrowUpDown, ArrowUp, ArrowDown, Wifi, ShieldAlert, AlertTriangle, CheckCircle2, X, Ban, Network, RefreshCw, ExternalLink, CreditCard, Check, Loader2 } from 'lucide-react';
 import { Subscriber, PaymentRecord, SubCalculatedData, MikroTikDhcpLease, MikroTikInterface, AuthUser } from '../types';
 import { calculateSubMetrics, displayName, formatCurrency, CURRENT_MONTH, abbrMonth, TODAY, getUnpaidMonths, getSubscriberBillingStatus, getSubscriberDueDay, getLeasesForSubscriber, getInterfaceForSubscriber, formatBytes } from '../utils/billingUtils';
 import { authFetch, canWrite } from '../utils/auth';
@@ -13,6 +13,7 @@ interface SubscribersListProps {
   onSelectSubscriber: (sub: Subscriber) => void;
   onAddSubscriber: () => void;
   onRefreshData?: () => Promise<void> | void;
+  onAddPayment?: (payment: PaymentRecord) => void;
 }
 
 export const SubscribersList: React.FC<SubscribersListProps> = ({
@@ -24,6 +25,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   onSelectSubscriber,
   onAddSubscriber,
   onRefreshData,
+  onAddPayment,
 }) => {
   const isReadOnly = !canWrite(currentUser);
   const [searchTerm, setSearchTerm] = useState('');
@@ -36,6 +38,17 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   // Disable Overdue VLANs State
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [isDisablingOverdue, setIsDisablingOverdue] = useState(false);
+
+  // Pay Confirmation Modal State
+  interface PaymentConfirmTarget {
+    subscriber: Subscriber;
+    unpaidMonths: string[];
+    selectedMonths: string[];
+    referenceNo: string;
+  }
+  const [paymentConfirmTarget, setPaymentConfirmTarget] = useState<PaymentConfirmTarget | null>(null);
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+
   const [actionNotification, setActionNotification] = useState<{
     type: 'success' | 'error' | 'info';
     message: string;
@@ -106,6 +119,93 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
       });
     } finally {
       setIsDisablingOverdue(false);
+    }
+  };
+
+  const handleOpenPaymentConfirm = (sub: Subscriber, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    if (isReadOnly) return;
+
+    const unpaid = getUnpaidMonths(sub, payments);
+    const monthsToPay = unpaid.length > 0 ? unpaid : [CURRENT_MONTH];
+
+    setPaymentConfirmTarget({
+      subscriber: sub,
+      unpaidMonths: monthsToPay,
+      selectedMonths: [...monthsToPay],
+      referenceNo: '',
+    });
+  };
+
+  const handleToggleMonthToPay = (mStr: string) => {
+    if (!paymentConfirmTarget) return;
+    const current = paymentConfirmTarget.selectedMonths;
+    const next = current.includes(mStr)
+      ? current.filter((m) => m !== mStr)
+      : [...current, mStr];
+    setPaymentConfirmTarget({
+      ...paymentConfirmTarget,
+      selectedMonths: next,
+    });
+  };
+
+  const handleSelectAllMonths = (selectAll: boolean) => {
+    if (!paymentConfirmTarget) return;
+    setPaymentConfirmTarget({
+      ...paymentConfirmTarget,
+      selectedMonths: selectAll ? [...paymentConfirmTarget.unpaidMonths] : [],
+    });
+  };
+
+  const handleConfirmPayment = async () => {
+    if (!paymentConfirmTarget || paymentConfirmTarget.selectedMonths.length === 0 || isReadOnly) return;
+    setIsSubmittingPayment(true);
+
+    const { subscriber, selectedMonths, referenceNo } = paymentConfirmTarget;
+    const rate = subscriber.rate || 600;
+    const nowTs = new Date().toLocaleString();
+
+    try {
+      for (const mStr of selectedMonths) {
+        const record: PaymentRecord = {
+          sub: subscriber.id,
+          month: mStr,
+          amount: rate,
+          ts: nowTs,
+          referenceNo: referenceNo.trim() || undefined,
+        };
+
+        if (onAddPayment) {
+          onAddPayment(record);
+        } else {
+          await authFetch('/api/payments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(record),
+          });
+        }
+      }
+
+      if (onRefreshData) {
+        await onRefreshData();
+      }
+
+      const totalAmount = selectedMonths.length * rate;
+      setActionNotification({
+        type: 'success',
+        message: `Payment confirmed for ${displayName(subscriber)}! ${selectedMonths.length} month(s) marked as Paid (${formatCurrency(totalAmount)}).`,
+      });
+      setPaymentConfirmTarget(null);
+    } catch (err: any) {
+      console.error('Payment recording error:', err);
+      setActionNotification({
+        type: 'error',
+        message: err.message || 'Failed to record payment.',
+      });
+    } finally {
+      setIsSubmittingPayment(false);
     }
   };
 
@@ -421,16 +521,21 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                               <ExternalLink className="w-3.5 h-3.5" />
                             </a>
                             {unpaidCount > 0 && (
-                              <span
-                                className={`inline-flex items-center justify-center min-w-[20px] px-1.5 py-0.5 text-[10px] font-bold border rounded-full shrink-0 ${
+                              <button
+                                type="button"
+                                onClick={(e) => handleOpenPaymentConfirm(sub, e)}
+                                disabled={isReadOnly}
+                                className={`inline-flex items-center justify-center min-w-[20px] px-1.5 py-0.5 text-[10px] font-bold border rounded-full shrink-0 transition-transform active:scale-95 ${
+                                  isReadOnly ? 'cursor-default' : 'cursor-pointer hover:shadow-xs'
+                                } ${
                                   billingStatus === 'overdue'
-                                    ? 'bg-rose-100 text-rose-700 border-rose-200'
-                                    : 'bg-amber-100 text-amber-800 border-amber-200'
+                                    ? 'bg-rose-100 text-rose-700 border-rose-200 hover:bg-rose-200'
+                                    : 'bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-200'
                                 }`}
-                                title={`${unpaidCount} unpaid month(s): ${unpaidMonths.join(', ')}`}
+                                title={isReadOnly ? `${unpaidCount} unpaid month(s)` : `${unpaidCount} unpaid month(s): ${unpaidMonths.join(', ')} • Click to mark as paid`}
                               >
                                 {unpaidCount}
-                              </span>
+                              </button>
                             )}
                           </div>
                           {sub.macAddress && (
@@ -564,15 +669,31 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                             <span>Excluded</span>
                           </span>
                         ) : m.paidCurrent ? (
-                          <span className="inline-flex items-center gap-1 font-bold text-teal-600 text-xs">
-                            <span className="w-5 h-5 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-xs">✓</span>
+                          <span className="inline-flex items-center gap-1.5 font-bold text-teal-700 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200/80 text-xs">
+                            <span className="w-4 h-4 rounded-full bg-teal-200 text-teal-800 flex items-center justify-center text-[10px] font-bold">✓</span>
                             <span>Paid</span>
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 font-semibold text-rose-600 text-xs">
-                            <span className="w-5 h-5 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center text-xs font-bold">—</span>
-                            <span>Unpaid</span>
-                          </span>
+                          <button
+                            type="button"
+                            disabled={isReadOnly}
+                            onClick={(e) => handleOpenPaymentConfirm(sub, e)}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-semibold text-xs transition-all border shadow-2xs group/pay ${
+                              isReadOnly
+                                ? 'bg-rose-50 text-rose-500 border-rose-200 cursor-not-allowed opacity-75'
+                                : 'bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border-rose-200 hover:border-rose-300 active:scale-95 cursor-pointer'
+                            }`}
+                            title={
+                              isReadOnly
+                                ? 'Unpaid (Viewer mode)'
+                                : `Click to mark as paid (${unpaidCount > 1 ? `${unpaidCount} months unpaid` : `${abbrMonth(CURRENT_MONTH)} unpaid`})`
+                            }
+                          >
+                            <span className="w-4 h-4 rounded-full bg-rose-200 text-rose-800 flex items-center justify-center text-[10px] font-bold group-hover/pay:bg-rose-600 group-hover/pay:text-white transition-colors">
+                              ✕
+                            </span>
+                            <span className="underline-offset-2 group-hover/pay:underline">Unpaid</span>
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -595,6 +716,198 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Payment Confirmation Modal */}
+      {paymentConfirmTarget && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isSubmittingPayment) {
+              setPaymentConfirmTarget(null);
+            }
+          }}
+        >
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150">
+            
+            {/* Modal Header */}
+            <div className="p-5 bg-emerald-50/90 border-b border-emerald-100 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-xs shrink-0">
+                  <CreditCard className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 leading-tight">
+                    Confirm Payment
+                  </h3>
+                  <p className="text-xs text-emerald-800 mt-0.5">
+                    Record subscription payment and mark as paid
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isSubmittingPayment && setPaymentConfirmTarget(null)}
+                disabled={isSubmittingPayment}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-white/60 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
+              {/* Subscriber Summary Card */}
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 font-medium">Subscriber:</span>
+                  <span className="font-bold text-slate-900 text-sm">{displayName(paymentConfirmTarget.subscriber)}</span>
+                </div>
+                <div className="flex items-center justify-between text-slate-600">
+                  <span className="text-slate-500">Account ID:</span>
+                  <span className="font-mono font-medium text-slate-800">
+                    #{paymentConfirmTarget.subscriber.id} {paymentConfirmTarget.subscriber.vlan ? `• VLAN ${paymentConfirmTarget.subscriber.vlan}` : ''}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-slate-600">
+                  <span className="text-slate-500">Monthly Plan Rate:</span>
+                  <span className="font-mono font-bold text-slate-900">
+                    {formatCurrency(paymentConfirmTarget.subscriber.rate || 600)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-slate-600">
+                  <span className="text-slate-500">Due Day:</span>
+                  <span className="font-medium text-slate-800">
+                    Day {getSubscriberDueDay(paymentConfirmTarget.subscriber)} of each month
+                  </span>
+                </div>
+              </div>
+
+              {/* Billing Cycle Selection */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <span className="font-bold text-slate-700">
+                    Billing Cycle(s) to Mark Paid:
+                  </span>
+                  {paymentConfirmTarget.unpaidMonths.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleSelectAllMonths(
+                          paymentConfirmTarget.selectedMonths.length !== paymentConfirmTarget.unpaidMonths.length
+                        )
+                      }
+                      className="text-[11px] font-semibold text-cyan-600 hover:text-cyan-700 cursor-pointer"
+                    >
+                      {paymentConfirmTarget.selectedMonths.length === paymentConfirmTarget.unpaidMonths.length
+                        ? 'Deselect All'
+                        : 'Select All'}
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                  {paymentConfirmTarget.unpaidMonths.map((mStr) => {
+                    const isSelected = paymentConfirmTarget.selectedMonths.includes(mStr);
+                    return (
+                      <div
+                        key={mStr}
+                        onClick={() => handleToggleMonthToPay(mStr)}
+                        className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                          isSelected
+                            ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950 font-semibold shadow-2xs'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                              isSelected
+                                ? 'bg-emerald-600 border-emerald-600 text-white'
+                                : 'border-slate-300 bg-white'
+                            }`}
+                          >
+                            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                          </div>
+                          <span>{mStr}</span>
+                          {mStr === CURRENT_MONTH && (
+                            <span className="text-[10px] px-1.5 py-0.5 bg-cyan-100 text-cyan-800 rounded font-semibold">
+                              Current Month
+                            </span>
+                          )}
+                        </div>
+                        <span className="font-mono font-bold text-xs">
+                          {formatCurrency(paymentConfirmTarget.subscriber.rate || 600)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Optional Reference Number */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-medium text-slate-600">
+                  Payment Reference / OR # <span className="text-slate-400 font-normal">(Optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={paymentConfirmTarget.referenceNo}
+                  onChange={(e) =>
+                    setPaymentConfirmTarget({
+                      ...paymentConfirmTarget,
+                      referenceNo: e.target.value,
+                    })
+                  }
+                  placeholder="e.g. GCash Ref #, OR #, Cash"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-mono bg-slate-50/50"
+                />
+              </div>
+
+              {/* Total Summary */}
+              <div className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-200 flex items-center justify-between">
+                <span className="font-semibold text-emerald-900">
+                  Total Amount ({paymentConfirmTarget.selectedMonths.length} month{paymentConfirmTarget.selectedMonths.length === 1 ? '' : 's'}):
+                </span>
+                <span className="text-base font-black font-mono text-emerald-700">
+                  {formatCurrency(
+                    paymentConfirmTarget.selectedMonths.length * (paymentConfirmTarget.subscriber.rate || 600)
+                  )}
+                </span>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setPaymentConfirmTarget(null)}
+                disabled={isSubmittingPayment}
+                className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-xl font-medium transition-colors cursor-pointer text-xs disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmPayment}
+                disabled={isSubmittingPayment || paymentConfirmTarget.selectedMonths.length === 0}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs flex items-center gap-2 shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmittingPayment ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Recording Payment...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Confirm Payment ({formatCurrency(paymentConfirmTarget.selectedMonths.length * (paymentConfirmTarget.subscriber.rate || 600))})</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Modal for Disabling Overdue Subscriber VLANs */}
       {isConfirmModalOpen && (

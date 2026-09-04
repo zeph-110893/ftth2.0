@@ -556,6 +556,7 @@ export default function App() {
                   setIsAddSubOpen(true);
                 }}
                 onRefreshData={fetchData}
+                onAddPayment={handleSavePayment}
               />
             )}
 
