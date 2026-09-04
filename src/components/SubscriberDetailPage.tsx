@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft,
-  ExternalLink,
   Trash2,
   History,
   CheckCircle2,
@@ -776,19 +775,8 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
           </nav>
         </div>
 
-        {/* Right side page actions: Open in separate window/tab & Quick Edit */}
+        {/* Right side page actions: Delete account */}
         <div className="flex items-center gap-2 ml-auto">
-          <a
-            href={`?sub=${subscriber.id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 shadow-2xs transition-colors"
-            title="Open subscriber in a separate browser tab"
-          >
-            <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-            <span className="hidden sm:inline">Open in New Tab</span>
-          </a>
-
           {!isReadOnly && (
             <button
               onClick={() => setShowDeleteSubConfirm(true)}

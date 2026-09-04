@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Plus, UserCheck, ArrowUpDown, ArrowUp, ArrowDown, Wifi, ShieldAlert, AlertTriangle, CheckCircle2, X, Ban, Network, RefreshCw, ExternalLink, CreditCard, Check, Loader2 } from 'lucide-react';
+import { Search, Plus, UserCheck, ArrowUpDown, ArrowUp, ArrowDown, Wifi, ShieldAlert, AlertTriangle, CheckCircle2, X, Ban, Network, RefreshCw, CreditCard, Check, Loader2 } from 'lucide-react';
 import { Subscriber, PaymentRecord, SubCalculatedData, MikroTikDhcpLease, MikroTikInterface, AuthUser } from '../types';
 import { calculateSubMetrics, displayName, formatCurrency, CURRENT_MONTH, abbrMonth, TODAY, getUnpaidMonths, getSubscriberBillingStatus, getSubscriberDueDay, getLeasesForSubscriber, getInterfaceForSubscriber, formatBytes, getCandidatePayableMonths, getNextMonthStr } from '../utils/billingUtils';
 import { authFetch, canWrite } from '../utils/auth';
@@ -549,16 +549,15 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                               ? 'text-amber-700 group-hover:text-amber-800'
                               : 'text-slate-900 group-hover:text-cyan-600'
                           }`}>
-                            <span>{nameStr}</span>
                             <a
                               href={`?sub=${sub.id}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-cyan-600 hover:bg-cyan-50 rounded transition-all"
-                              title="Open in separate tab"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectSubscriber(sub);
+                              }}
+                              className="hover:underline focus:outline-hidden"
                             >
-                              <ExternalLink className="w-3.5 h-3.5" />
+                              {nameStr}
                             </a>
                             {unpaidCount > 0 && (
                               <button
