@@ -616,7 +616,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                         )}
                       </td>
 
-                      {/* VLAN Assignment Column: Clean, safe display badge (assignment managed inside Subscriber Modal) */}
+                      {/* VLAN Assignment Column: Clean, safe display badge (assignment managed inside Subscriber Details Page) */}
                       <td className="py-3 px-3">
                         {(() => {
                           const iface = getInterfaceForSubscriber(sub, mikrotikInterfaces);
@@ -709,12 +709,8 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                             <span>Excluded</span>
                           </span>
                         ) : m.paidCurrent ? (
-                          <button
-                            type="button"
-                            disabled={isReadOnly}
-                            onClick={(e) => handleOpenPaymentConfirm(sub, e)}
-                            className="inline-flex items-center gap-1.5 font-bold text-teal-700 bg-teal-50 hover:bg-teal-100/90 px-2.5 py-1 rounded-lg border border-teal-200/80 hover:border-teal-300 text-xs transition-all cursor-pointer group/paid"
-                            title={isReadOnly ? 'Paid' : 'Current cycle paid. Click to accept advance payment'}
+                          <span
+                            className="inline-flex items-center gap-1.5 font-bold text-teal-700 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200/80 text-xs"
                           >
                             <span className="w-4 h-4 rounded-full bg-teal-200 text-teal-800 flex items-center justify-center text-[10px] font-bold">✓</span>
                             <span>Paid</span>
@@ -723,7 +719,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                                 +{m.advancePaidCount}mo
                               </span>
                             ) : null}
-                          </button>
+                          </span>
                         ) : (
                           <button
                             type="button"
