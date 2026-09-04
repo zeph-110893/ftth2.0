@@ -78,7 +78,13 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   const overdueSubsCount = subscribers.filter((s) => getSubscriberBillingStatus(s, payments) === 'overdue').length;
   const inactiveSubsCount = subscribers.filter((s) => getSubscriberBillingStatus(s, payments) === 'inactive').length;
   const excludedSubsCount = subscribers.filter((s) => getSubscriberBillingStatus(s, payments) === 'exclude').length;
-  const nonInactiveSubsCount = subscribers.filter((s) => s.status !== 'Inactive' && getSubscriberBillingStatus(s, payments) !== 'inactive').length;
+  const allStatusSubsCount = subscribers.filter(
+    (s) =>
+      s.status !== 'Inactive' &&
+      getSubscriberBillingStatus(s, payments) !== 'inactive' &&
+      s.status !== 'Exclude' &&
+      getSubscriberBillingStatus(s, payments) !== 'exclude'
+  ).length;
 
   const assignedVlanSubsCount = subscribers.filter((s) => s.vlan && Number(s.vlan) > 0).length;
   const unassignedVlanSubsCount = subscribers.length - assignedVlanSubsCount;
@@ -266,7 +272,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
     if (statusFilter === 'overdue' && billingStatus !== 'overdue') return false;
     if (statusFilter === 'inactive' && billingStatus !== 'inactive') return false;
     if (statusFilter === 'exclude' && billingStatus !== 'exclude') return false;
-    if (statusFilter === 'all' && (billingStatus === 'inactive' || sub.status === 'Inactive')) return false;
+    if (statusFilter === 'all' && (billingStatus === 'inactive' || sub.status === 'Inactive' || billingStatus === 'exclude' || sub.status === 'Exclude')) return false;
 
     if (paymentFilter === 'paid' && (unpaidCount > 0 || sub.status === 'Inactive' || sub.status === 'Exclude')) return false;
     if (paymentFilter === 'unpaid' && (unpaidCount === 0 || sub.status === 'Inactive' || sub.status === 'Exclude')) return false;
@@ -355,7 +361,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
               onChange={(e) => setStatusFilter(e.target.value as any)}
               className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-medium bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer"
             >
-              <option value="all">All Status ({nonInactiveSubsCount})</option>
+              <option value="all">All Status ({allStatusSubsCount})</option>
               <option value="active">Active ({activeSubsCount})</option>
               <option value="due">Due ({dueSubsCount})</option>
               <option value="overdue">Overdue ({overdueSubsCount})</option>
