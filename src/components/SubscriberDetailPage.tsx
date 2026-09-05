@@ -132,6 +132,9 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
   // Delete Subscriber confirmation modal
   const [showDeleteSubConfirm, setShowDeleteSubConfirm] = useState(false);
 
+  // Mobile Tab view state: 'profile' | 'leases' | 'billing' | 'all'
+  const [mobileTab, setMobileTab] = useState<'profile' | 'leases' | 'billing' | 'all'>('profile');
+
   // State for DHCP lease pinging (ARP-Ping)
   const [pingResults, setPingResults] = useState<
     Record<string, {
@@ -847,9 +850,9 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
               </div>
 
               {/* Subtitle with VLAN and Due Date info */}
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-2 text-xs text-slate-500">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="font-semibold text-slate-400 uppercase tracking-wider text-[11px]">VLAN:</span>
+              <div className="flex flex-wrap items-center gap-2 sm:gap-x-3 sm:gap-y-1.5 mt-2.5 text-xs text-slate-500">
+                <div className="inline-flex items-center gap-1.5 bg-slate-50 sm:bg-transparent px-2.5 py-1 sm:p-0 rounded-lg border border-slate-200 sm:border-0">
+                  <span className="font-semibold text-slate-400 uppercase tracking-wider text-[10px] sm:text-[11px]">VLAN:</span>
                   {subscriber.vlan ? (
                     <span className="px-2 py-0.5 rounded text-xs font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono">
                       VLAN-{subscriber.vlan}
@@ -868,22 +871,22 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                       }`}
                     >
                       <span className={`w-1.5 h-1.5 rounded-full ${isVlanEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-                      <span>{isVlanEnabled ? 'ONLINE / ENABLED' : 'DISABLED'}</span>
+                      <span>{isVlanEnabled ? 'ONLINE' : 'DISABLED'}</span>
                     </span>
                   )}
                 </div>
 
                 <div className="hidden sm:block text-slate-300">&bull;</div>
 
-                <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-slate-400 uppercase tracking-wider text-[11px]">Billing:</span>
+                <div className="inline-flex items-center gap-1.5 bg-slate-50 sm:bg-transparent px-2.5 py-1 sm:p-0 rounded-lg border border-slate-200 sm:border-0">
+                  <span className="font-semibold text-slate-400 uppercase tracking-wider text-[10px] sm:text-[11px]">Billing:</span>
                   <span className="font-mono font-bold text-slate-800">{dueDateDisplay}</span>
                 </div>
 
                 <div className="hidden sm:block text-slate-300">&bull;</div>
 
-                <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-slate-400 uppercase tracking-wider text-[11px]">Plan:</span>
+                <div className="inline-flex items-center gap-1.5 bg-slate-50 sm:bg-transparent px-2.5 py-1 sm:p-0 rounded-lg border border-slate-200 sm:border-0">
+                  <span className="font-semibold text-slate-400 uppercase tracking-wider text-[10px] sm:text-[11px]">Plan:</span>
                   <span className="font-mono font-bold text-emerald-700">{formatCurrency(subscriber.rate)} / mo</span>
                 </div>
               </div>
@@ -924,10 +927,97 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
         </div>
       </div>
 
+      {/* Mobile Sticky Segmented Navigation (< lg screens) */}
+      <div className="block lg:hidden sticky top-2 z-20 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 p-1.5 shadow-sm">
+        <div className="grid grid-cols-4 gap-1">
+          <button
+            type="button"
+            onClick={() => setMobileTab('profile')}
+            className={`flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-bold transition-all ${
+              mobileTab === 'profile'
+                ? 'bg-cyan-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/80 active:bg-slate-200'
+            }`}
+          >
+            <User className="w-4 h-4 shrink-0" />
+            <span className="text-[11px] leading-tight">Profile</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMobileTab('leases')}
+            className={`flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-bold transition-all ${
+              mobileTab === 'leases'
+                ? 'bg-cyan-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/80 active:bg-slate-200'
+            }`}
+          >
+            <div className="relative">
+              <Wifi className="w-4 h-4 shrink-0" />
+              {subLeases.length > 0 && (
+                <span
+                  className={`absolute -top-1.5 -right-2 text-[9px] min-w-[15px] h-[15px] px-1 rounded-full font-black flex items-center justify-center leading-none ${
+                    mobileTab === 'leases' ? 'bg-white text-cyan-700' : 'bg-cyan-600 text-white'
+                  }`}
+                >
+                  {subLeases.length}
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] leading-tight">Devices</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMobileTab('billing')}
+            className={`flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-bold transition-all ${
+              mobileTab === 'billing'
+                ? 'bg-cyan-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/80 active:bg-slate-200'
+            }`}
+          >
+            <div className="relative">
+              <CreditCard className="w-4 h-4 shrink-0" />
+              {unpaidMonths.length > 0 ? (
+                <span
+                  className={`absolute -top-1.5 -right-2 text-[9px] min-w-[15px] h-[15px] px-1 rounded-full font-black flex items-center justify-center leading-none ${
+                    mobileTab === 'billing' ? 'bg-white text-rose-600' : 'bg-rose-500 text-white'
+                  }`}
+                >
+                  {unpaidMonths.length}
+                </span>
+              ) : (
+                <span
+                  className={`absolute -top-1.5 -right-2 text-[9px] min-w-[15px] h-[15px] px-1 rounded-full font-black flex items-center justify-center leading-none ${
+                    mobileTab === 'billing' ? 'bg-white text-emerald-600' : 'bg-emerald-500 text-white'
+                  }`}
+                >
+                  ✓
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] leading-tight">Billing</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMobileTab('all')}
+            className={`flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-bold transition-all ${
+              mobileTab === 'all'
+                ? 'bg-cyan-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/80 active:bg-slate-200'
+            }`}
+          >
+            <Server className="w-4 h-4 shrink-0" />
+            <span className="text-[11px] leading-tight">All Views</span>
+          </button>
+        </div>
+      </div>
+
       {/* Main 2-Column Responsive Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Profile, Contract & RouterOS VLAN Controls */}
-        <div className="lg:col-span-5 space-y-6">
+        <div className={`space-y-6 lg:col-span-5 ${mobileTab === 'profile' || mobileTab === 'all' ? 'block' : 'hidden lg:block'}`}>
           {/* Card: Subscriber Profile & Billing Config */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
@@ -1511,12 +1601,12 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
         </div>
 
         {/* Right Column: DHCP Leases (with ARP-Ping) & Billing Payment History */}
-        <div className="lg:col-span-7 space-y-6">
+        <div className={`space-y-6 lg:col-span-7 ${mobileTab === 'leases' || mobileTab === 'billing' || mobileTab === 'all' ? 'block' : 'hidden lg:block'}`}>
           {/* Card: DHCP Leases & Real-time Connectivity Diagnostics */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
-              <div className="flex items-center gap-2">
-                <Wifi className="w-4 h-4 text-cyan-600" />
+          <div className={`bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden ${mobileTab === 'leases' || mobileTab === 'all' ? 'block' : 'hidden lg:block'}`}>
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Wifi className="w-4 h-4 text-cyan-600 shrink-0" />
                 <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700">
                   Connected DHCP Leases (VLAN {subscriber.vlan || 'N/A'})
                 </h2>
@@ -1539,7 +1629,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                   type="button"
                   onClick={handlePingAllLeases}
                   disabled={isPingingAll}
-                  className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  className="w-full sm:w-auto justify-center px-3.5 py-2 sm:py-1.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all min-h-[38px] sm:min-h-[34px]"
                   title="Send Layer-2 ARP-Ping packets (bypasses client firewall ICMP blocks)"
                 >
                   {isPingingAll ? (
@@ -1559,23 +1649,23 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
 
             {/* Diagnostic Summary Bar */}
             {pingSummary && (
-              <div className="px-5 py-2.5 bg-slate-900 text-slate-200 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <div className="flex items-center gap-3">
-                  <span className="font-bold text-slate-300">ARP-Ping Summary:</span>
+              <div className="px-4 sm:px-5 py-2.5 bg-slate-900 text-slate-200 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                  <span className="font-bold text-slate-300">ARP-Ping:</span>
                   <span className="inline-flex items-center gap-1 text-emerald-400 font-bold">
                     <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                    {pingSummary.alive} Online (Responded)
+                    {pingSummary.alive} Online
                   </span>
                   <span className="inline-flex items-center gap-1 text-rose-400 font-bold">
                     <span className="w-2 h-2 rounded-full bg-rose-400"></span>
-                    {pingSummary.dead} Offline (No ARP Reply)
+                    {pingSummary.dead} Offline
                   </span>
-                  <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">
+                  <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono hidden sm:inline">
                     Layer-2 · Bypasses ICMP firewall
                   </span>
                 </div>
                 <span className="text-[11px] text-slate-400 font-mono">
-                  Checked at {pingSummary.timestamp}
+                  {pingSummary.timestamp}
                 </span>
               </div>
             )}
@@ -1583,7 +1673,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
             {/* Delete Lease Feedback */}
             {leaseDeleteMsg && (
               <div
-                className={`mx-5 my-3 px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-between transition-all ${
+                className={`mx-4 sm:mx-5 my-3 px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-between transition-all ${
                   leaseDeleteMsg.isError
                     ? 'bg-rose-50 text-rose-700 border border-rose-200'
                     : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
@@ -1613,19 +1703,29 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                 </div>
               ) : (
                 subLeases.map((lease, idx) => (
-                  <div key={lease.id || lease.macAddress ? `mb-dt-${lease.id || lease.macAddress}` : `mb-lease-${idx}`} className="p-3.5 space-y-2">
+                  <div key={lease.id || lease.macAddress ? `mb-dt-${lease.id || lease.macAddress}` : `mb-lease-${idx}`} className="p-3.5 space-y-2.5">
                     <div className="flex items-start justify-between gap-2">
-                      <div>
+                      <div className="min-w-0 flex-1">
                         {renderIpCell(lease)}
-                        <div className="font-semibold text-slate-800 text-xs mt-1">
+                        <div className="font-semibold text-slate-800 text-xs mt-1 truncate">
                           {lease.hostName || '—'}
                         </div>
                         {lease.macAddress && (
-                          <div className="text-[10px] font-mono text-slate-400">{lease.macAddress}</div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-[10px] font-mono text-slate-400">{lease.macAddress}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyMac(lease.macAddress!)}
+                              className="text-slate-400 hover:text-slate-600 p-0.5"
+                              title="Copy MAC Address"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </button>
+                          </div>
                         )}
                       </div>
                       <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0 ${
                           lease.status === 'bound'
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                             : 'bg-amber-50 text-amber-700 border border-amber-200'
@@ -1636,17 +1736,17 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100">
+                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
                       <button
                         type="button"
                         onClick={() => handlePingSingleLease(lease)}
                         disabled={isPingingAll || pingingSingleIp === lease.address}
-                        className="px-2.5 py-1 rounded-lg text-slate-600 hover:text-cyan-700 hover:bg-cyan-50 border border-slate-200 transition-colors cursor-pointer inline-flex items-center gap-1 text-xs font-semibold disabled:opacity-40"
+                        className="px-3 py-1.5 rounded-xl text-slate-700 hover:text-cyan-700 hover:bg-cyan-50 border border-slate-200 transition-colors cursor-pointer inline-flex items-center gap-1.5 text-xs font-semibold disabled:opacity-40 min-h-[36px]"
                       >
                         {pingingSingleIp === lease.address ? (
-                          <Loader2 className="w-3 h-3 animate-spin text-cyan-600" />
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-600" />
                         ) : (
-                          <Radio className="w-3 h-3" />
+                          <Radio className="w-3.5 h-3.5" />
                         )}
                         <span>ARP-Ping</span>
                       </button>
@@ -1654,10 +1754,10 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                         <button
                           type="button"
                           onClick={() => setLeaseToDelete(lease)}
-                          className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition-colors cursor-pointer"
+                          className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition-colors cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
                           title="Delete DHCP lease"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       )}
                     </div>
@@ -1751,10 +1851,10 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
           </div>
 
           {/* Card: Billing & Payment History */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
-              <div className="flex items-center gap-2">
-                <CreditCard className="w-4 h-4 text-cyan-600" />
+          <div className={`bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden ${mobileTab === 'billing' || mobileTab === 'all' ? 'block' : 'hidden lg:block'}`}>
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
+              <div className="flex items-center gap-2 flex-wrap">
+                <CreditCard className="w-4 h-4 text-cyan-600 shrink-0" />
                 <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700">Billing & Payment Records</h2>
                 <span className="text-xs text-slate-400 font-medium">
                   ({unpaidMonths.length} unpaid, {metrics.entries.length} paid)
@@ -1763,10 +1863,11 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
 
               <div className="flex items-center gap-2">
                 <button
+                  type="button"
                   onClick={() => setShowHistory(!showHistory)}
-                  className="text-xs font-bold text-slate-600 hover:text-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-100 transition-colors cursor-pointer flex items-center gap-1.5"
+                  className="w-full sm:w-auto justify-center text-xs font-bold text-slate-700 hover:text-slate-900 px-3.5 py-2 sm:py-1.5 rounded-xl border border-slate-200 hover:bg-slate-100 bg-white transition-colors cursor-pointer flex items-center gap-1.5 min-h-[36px]"
                 >
-                  <History className="w-3.5 h-3.5" />
+                  <History className="w-3.5 h-3.5 text-slate-500" />
                   <span>{showHistory ? 'View Due Months' : 'View Payment History'}</span>
                 </button>
               </div>
@@ -1774,8 +1875,8 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
 
             {/* Unpaid Months View */}
             {!showHistory && (
-              <div className="p-5 space-y-4">
-                <div className="flex items-center justify-between">
+              <div className="p-4 sm:p-5 space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Unpaid & Payable Months</span>
                   <div className="flex items-center gap-3">
                     {!isReadOnly && subscriber.status !== 'Inactive' && subscriber.status !== 'Exclude' && (
@@ -1789,6 +1890,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                     )}
                     {allPayableMonths.length > 0 && !isReadOnly && (
                       <button
+                        type="button"
                         onClick={handleToggleSelectAll}
                         className="text-xs font-semibold text-cyan-600 hover:underline cursor-pointer"
                       >
@@ -1823,7 +1925,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                           <button
                             type="button"
                             onClick={handleAddAdvanceMonth}
-                            className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-2xs cursor-pointer transition-colors flex items-center gap-1.5"
+                            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-2xs cursor-pointer transition-colors flex items-center gap-1.5 min-h-[38px]"
                           >
                             <span>+ Add Advance Month</span>
                           </button>
@@ -1840,48 +1942,48 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                       return (
                         <div
                           key={mStr}
-                          className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+                          className={`flex items-center justify-between p-3 sm:p-3.5 rounded-xl border transition-all ${
                             isSelected
-                              ? 'bg-cyan-50/70 border-cyan-300 text-cyan-900 shadow-2xs'
+                              ? 'bg-cyan-50/80 border-cyan-300 text-cyan-900 shadow-2xs'
                               : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
                           }`}
                         >
-                          <div className="flex items-center gap-3">
+                          <label className="flex items-center gap-3 cursor-pointer select-none min-w-0 flex-1">
                             {!isReadOnly && (
                               <input
                                 type="checkbox"
                                 checked={isSelected}
                                 onChange={() => handleToggleMonth(mStr)}
-                                className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 border-slate-300 cursor-pointer"
+                                className="w-5 h-5 rounded text-cyan-600 focus:ring-cyan-500 border-slate-300 cursor-pointer shrink-0"
                               />
                             )}
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold">{mStr}</span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs sm:text-sm font-bold text-slate-900">{mStr}</span>
                                 {isUnpaid && !isCurrent && (
-                                  <span className="text-[10px] px-1.5 py-0.2 bg-rose-100 text-rose-800 rounded font-semibold">
+                                  <span className="text-[10px] px-1.5 py-0.2 bg-rose-100 text-rose-800 rounded font-bold">
                                     Overdue
                                   </span>
                                 )}
                                 {isUnpaid && isCurrent && (
-                                  <span className="text-[10px] px-1.5 py-0.2 bg-cyan-100 text-cyan-800 rounded font-semibold">
-                                    Due (Current)
+                                  <span className="text-[10px] px-1.5 py-0.2 bg-cyan-100 text-cyan-800 rounded font-bold">
+                                    Due
                                   </span>
                                 )}
                                 {!isUnpaid && (
-                                  <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded font-semibold">
+                                  <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded font-bold">
                                     Advance
                                   </span>
                                 )}
                               </div>
-                              <span className="text-[11px] text-slate-400">
+                              <span className="text-[11px] text-slate-500 block">
                                 Due: {formatMonthShort(mStr)} {getSubscriberDueDay(subscriber)}
                               </span>
                             </div>
-                          </div>
+                          </label>
 
-                          <div className="flex items-center gap-3">
-                            <span className="font-mono text-xs font-bold text-slate-900">
+                          <div className="flex items-center gap-2.5 shrink-0 ml-2">
+                            <span className="font-mono text-xs sm:text-sm font-black text-slate-900">
                               {formatCurrency(subscriber.rate)}
                             </span>
 
@@ -1889,7 +1991,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                               <button
                                 type="button"
                                 onClick={() => handleSingleMonthPay(mStr)}
-                                className="px-2.5 py-1 text-xs font-bold rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white transition-colors cursor-pointer shadow-2xs"
+                                className="px-3 py-1.5 min-h-[36px] text-xs font-bold rounded-xl bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white transition-colors cursor-pointer shadow-2xs"
                               >
                                 Pay
                               </button>
@@ -1901,14 +2003,14 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
 
                     {/* Bulk Action & Payment Details Footer */}
                     {!isReadOnly && (
-                      <div className="pt-3 border-t border-slate-100 space-y-3">
+                      <div className="pt-3.5 border-t border-slate-100 space-y-3">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                           <div className="flex items-center gap-2">
                             <label className="text-[11px] font-semibold text-slate-600 shrink-0">Method:</label>
                             <select
                               value={paymentMethod}
                               onChange={(e) => setPaymentMethod(e.target.value)}
-                              className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs bg-white focus:ring-1 focus:ring-cyan-500 focus:outline-hidden"
+                              className="w-full min-h-[38px] px-2.5 py-1.5 border border-slate-200 rounded-xl text-xs bg-white focus:ring-1 focus:ring-cyan-500 focus:outline-hidden"
                             >
                               <option value="Cash">Cash</option>
                               <option value="GCash">GCash</option>
@@ -1923,29 +2025,34 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                               value={paymentRefNo}
                               onChange={(e) => setPaymentRefNo(e.target.value)}
                               placeholder="Optional reference"
-                              className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs bg-white focus:ring-1 focus:ring-cyan-500 focus:outline-hidden font-mono"
-                            />
+                              className="w-full min-h-[38px] px-2.5 py-1.5 border border-slate-200 rounded-xl text-xs bg-white focus:ring-1 focus:ring-cyan-500 focus:outline-hidden font-mono"
+                            >
+                            </input>
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between pt-1">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
                           <span className="text-xs text-slate-600 font-medium">
                             {selectedUnpaid.length > 0
                               ? `${selectedUnpaid.length} month(s) selected: ${formatCurrency(selectedUnpaid.length * (subscriber.rate || 600))}`
-                              : 'Select 1 or more months (e.g. 2 months) to mark as paid together'}
+                              : 'Select 1 or more months to mark as paid together'}
                           </span>
                           <button
+                            type="button"
                             onClick={handleMarkPaid}
                             disabled={selectedUnpaid.length === 0}
-                            className={`px-4 py-2 text-xs font-bold rounded-xl transition-colors ${
+                            className={`w-full sm:w-auto min-h-[42px] px-5 py-2.5 text-xs sm:text-sm font-bold rounded-xl transition-colors flex items-center justify-center gap-2 ${
                               selectedUnpaid.length > 0
-                                ? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-xs cursor-pointer'
+                                ? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-xs cursor-pointer active:bg-cyan-700'
                                 : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                             }`}
                           >
-                            {selectedUnpaid.length > 0
-                              ? `Mark Paid (${formatCurrency(selectedUnpaid.length * (subscriber.rate || 600))})`
-                              : 'Mark Paid'}
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>
+                              {selectedUnpaid.length > 0
+                                ? `Mark Paid (${formatCurrency(selectedUnpaid.length * (subscriber.rate || 600))})`
+                                : 'Mark Paid'}
+                            </span>
                           </button>
                         </div>
                       </div>
@@ -1968,22 +2075,23 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                     </div>
                   ) : (
                     metrics.entries.map((entry, idx) => (
-                      <div key={`mb-pay-${entry.ts || `${entry.month}-${idx}`}`} className="p-3 flex items-center justify-between gap-2">
-                        <div>
+                      <div key={`mb-pay-${entry.ts || `${entry.month}-${idx}`}`} className="p-3.5 flex items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1">
                           <div className="font-bold text-slate-800 text-xs">{entry.month}</div>
-                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">{entry.ts || '—'}</div>
+                          <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">{entry.ts || '—'}</div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-emerald-600 text-xs">
+                        <div className="flex items-center gap-2.5 shrink-0">
+                          <span className="font-mono font-bold text-emerald-600 text-xs sm:text-sm">
                             {formatCurrency(entry.amount)}
                           </span>
                           {!isReadOnly && (
                             <button
+                              type="button"
                               onClick={() => onDeletePayment(entry.ts, subscriber.id, entry.month)}
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              className="p-2 min-h-[36px] min-w-[36px] flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 active:bg-rose-100 rounded-xl border border-slate-200 transition-colors cursor-pointer"
                               title="Delete payment record"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           )}
                         </div>
