@@ -62,8 +62,8 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
   ];
 
   return (
-    <div className="bg-slate-900 border-b border-slate-800/90 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar py-1.5">
+    <div className="bg-slate-900 border-b border-slate-800/90 px-3 sm:px-6 lg:px-8">
+      <div className="max-w-7xl mx-auto flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar scroll-smooth py-1.5 touch-pan-x">
         {allTabs.map((tab) => {
           const isActive = currentTab === tab.id;
           const Icon = tab.icon;
@@ -71,17 +71,17 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
             <button
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
-              className={`py-2 px-3 sm:py-2.5 sm:px-3.5 text-xs font-semibold rounded-xl transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 shrink-0 ${
+              className={`py-2 px-3 sm:py-2.5 sm:px-3.5 text-xs font-semibold rounded-xl transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 shrink-0 select-none active:scale-95 touch-manipulation min-h-[38px] ${
                 isActive
                   ? 'bg-cyan-500/15 text-cyan-300 font-bold border border-cyan-500/30 shadow-xs'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
               }`}
             >
-              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
+              <Icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
               <span>{tab.label}</span>
               {tab.badge !== undefined && (
                 <span
-                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
                     tab.badgeColor || (isActive ? 'bg-cyan-400/20 text-cyan-300 border border-cyan-400/40' : 'bg-slate-800 text-slate-400')
                   }`}
                 >

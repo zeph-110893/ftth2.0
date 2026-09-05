@@ -330,22 +330,22 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   return (
     <div className="space-y-4">
       {/* Search & Filters Bar */}
-      <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-xs flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+      <div className="bg-white border border-slate-200/90 rounded-xl p-3 sm:p-4 shadow-xs flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
         
         {/* Search input */}
         <div className="relative flex-1">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search subscriber name, ID, VLAN, MAC address..."
-            className="w-full pl-10 pr-4 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 bg-slate-50/50"
+            placeholder="Search subscriber name, ID, VLAN, MAC..."
+            className="w-full pl-10 pr-12 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 bg-slate-50/50 min-h-[38px]"
           />
           {searchTerm && (
             <button
               onClick={() => setSearchTerm('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 font-semibold px-1 py-0.5"
             >
               Clear
             </button>
@@ -353,13 +353,14 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
         </div>
 
         {/* Dropdown Filters & Actions */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5 text-xs text-slate-600">
-            <span className="font-medium text-slate-500">Status:</span>
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-center gap-2">
+          {/* Status Filter */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-1.5 text-xs text-slate-600">
+            <span className="font-semibold text-slate-500 text-[11px] sm:text-xs">Status:</span>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-medium bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer"
+              className="w-full sm:w-auto px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-medium bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer min-h-[34px]"
             >
               <option value="all">All Status ({allStatusSubsCount})</option>
               <option value="active">Active ({activeSubsCount})</option>
@@ -371,12 +372,12 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
           </div>
 
           {/* VLAN Filter */}
-          <div className="flex items-center gap-1.5 text-xs text-slate-600">
-            <span className="font-medium text-slate-500">VLAN:</span>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-1.5 text-xs text-slate-600">
+            <span className="font-semibold text-slate-500 text-[11px] sm:text-xs">VLAN:</span>
             <select
               value={vlanFilter}
               onChange={(e) => setVlanFilter(e.target.value as any)}
-              className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-medium bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer"
+              className="w-full sm:w-auto px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-medium bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer min-h-[34px]"
             >
               <option value="all">All VLANs ({subscribers.length})</option>
               <option value="assigned">Assigned ({assignedVlanSubsCount})</option>
@@ -384,12 +385,13 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
             </select>
           </div>
 
-          <div className="flex items-center gap-1.5 text-xs text-slate-600">
-            <span className="font-medium text-slate-500">{abbrMonth(CURRENT_MONTH)}:</span>
+          {/* Payment Filter */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-1.5 text-xs text-slate-600">
+            <span className="font-semibold text-slate-500 text-[11px] sm:text-xs">{abbrMonth(CURRENT_MONTH)}:</span>
             <select
               value={paymentFilter}
               onChange={(e) => setPaymentFilter(e.target.value as any)}
-              className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-medium bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer"
+              className="w-full sm:w-auto px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-medium bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer min-h-[34px]"
             >
               <option value="all">All Payments</option>
               <option value="paid">Paid Only</option>
@@ -403,7 +405,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
               type="button"
               onClick={() => setIsConfirmModalOpen(true)}
               disabled={isDisablingOverdue}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200/90 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              className="col-span-2 sm:col-span-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200/90 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto min-h-[34px]"
               title="Disable all overdue subscriber VLAN interfaces in MikroTik RouterOS"
             >
               <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
@@ -457,9 +459,188 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
         </div>
       )}
 
-      {/* Main Table Card */}
+      {/* Main Table & Mobile Cards Card */}
       <div className="bg-white border border-slate-200/90 rounded-xl shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Mobile View: Subscriber Cards (Visible on mobile/tablet screens < md) */}
+        <div className="block md:hidden divide-y divide-slate-100">
+          {sortedSubs.length === 0 ? (
+            <div className="py-12 px-4 text-center text-slate-400">
+              <UserCheck className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+              <p className="font-semibold text-slate-700 text-sm">No subscribers found</p>
+              <p className="text-xs text-slate-400 mt-0.5">Try adjusting your search query or filter parameters.</p>
+              <button
+                type="button"
+                onClick={onAddSubscriber}
+                className="mt-3 inline-flex items-center gap-1.5 px-3.5 py-2 bg-cyan-600 text-white font-bold text-xs rounded-xl shadow-xs active:bg-cyan-700 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add New Subscriber
+              </button>
+            </div>
+          ) : (
+            sortedSubs.map((sub) => {
+              const m = subMetricsMap[sub.id];
+              const nameStr = displayName(sub);
+              const unpaidMonths = getUnpaidMonths(sub, payments);
+              const unpaidCount = unpaidMonths.length;
+              const billingStatus = getSubscriberBillingStatus(sub, payments);
+              const subLeases = getLeasesForSubscriber(sub, dhcpLeases);
+              const iface = getInterfaceForSubscriber(sub, mikrotikInterfaces);
+              const day = getSubscriberDueDay(sub);
+              const isAssigned = sub.vlan !== null && sub.vlan !== undefined && Number(sub.vlan) > 0;
+
+              return (
+                <div
+                  key={`card-${sub.id}`}
+                  onClick={() => onSelectSubscriber(sub)}
+                  className="p-3.5 hover:bg-slate-50 active:bg-slate-100 transition-colors cursor-pointer space-y-2.5 touch-manipulation"
+                >
+                  {/* Top Row: Name + Status Pill */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-sm font-bold truncate ${
+                          billingStatus === 'overdue'
+                            ? 'text-rose-600'
+                            : billingStatus === 'due'
+                            ? 'text-amber-700'
+                            : 'text-slate-900'
+                        }`}>
+                          {nameStr}
+                        </span>
+                        <span className="text-[10px] font-bold font-mono text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200 shrink-0">
+                          #{sub.id}
+                        </span>
+                      </div>
+                      {sub.macAddress && (
+                        <div className="text-[10px] font-mono text-slate-400 mt-0.5 truncate">
+                          MAC: {sub.macAddress}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Status pill */}
+                    <div className="shrink-0">
+                      {billingStatus === 'exclude' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200 uppercase">
+                          <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                          Exclude
+                        </span>
+                      ) : billingStatus === 'inactive' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200 uppercase">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                          Inactive
+                        </span>
+                      ) : billingStatus === 'due' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 uppercase">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                          Due
+                        </span>
+                      ) : billingStatus === 'overdue' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 uppercase">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                          Overdue
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200 uppercase">
+                          <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+                          Active
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Middle Row: Badges (VLAN, Leases, Due Day, Bandwidth) */}
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    {/* VLAN */}
+                    {isAssigned ? (
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-[11px] font-bold border ${
+                        iface?.disabled
+                          ? 'bg-amber-50 text-amber-800 border-amber-200'
+                          : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                      }`}>
+                        <Network className="w-3 h-3 text-indigo-500" />
+                        <span>VLAN {sub.vlan}</span>
+                        {iface?.disabled ? (
+                          <span className="text-[9px] text-amber-600 uppercase font-black">OFF</span>
+                        ) : iface?.running ? (
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-slate-400 italic bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
+                        No VLAN
+                      </span>
+                    )}
+
+                    {/* Due Day */}
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200 font-mono">
+                      <span>Due: Day {day}</span>
+                    </span>
+
+                    {/* Leases */}
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border ${
+                      subLeases.length > 0
+                        ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
+                        : 'bg-slate-50 text-slate-500 border-slate-200'
+                    }`}>
+                      <Wifi className="w-2.5 h-2.5" />
+                      <span>{subLeases.length} {subLeases.length === 1 ? 'device' : 'devices'}</span>
+                    </span>
+
+                    {/* Bandwidth if present */}
+                    {iface && (iface.rxByte || iface.txByte) ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono bg-slate-50 text-slate-600 border border-slate-200">
+                        <span className="text-teal-600 font-bold">↓{formatBytes(iface.txByte)}</span>
+                        <span className="text-slate-300">|</span>
+                        <span className="text-cyan-600 font-bold">↑{formatBytes(iface.rxByte)}</span>
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {/* Bottom Row: Billing info & direct Pay action */}
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-slate-500">{abbrMonth(CURRENT_MONTH)}:</span>
+                      {sub.status === 'Inactive' ? (
+                        <span className="text-slate-400 text-xs italic">Inactive</span>
+                      ) : sub.status === 'Exclude' ? (
+                        <span className="text-slate-400 text-xs italic">Excluded</span>
+                      ) : m.paidCurrent ? (
+                        <span className="inline-flex items-center gap-1 text-teal-700 font-bold text-[11px] bg-teal-50 px-2 py-0.5 rounded-md border border-teal-200">
+                          <span className="text-teal-600 font-black">✓</span> Paid
+                          {m.advancePaidCount && m.advancePaidCount > 0 ? (
+                            <span className="text-[9px] bg-teal-200 text-teal-900 px-1 rounded font-bold">+{m.advancePaidCount}mo</span>
+                          ) : null}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-rose-700 font-bold text-[11px] bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
+                          <span>Unpaid</span>
+                          {unpaidCount > 1 && (
+                            <span className="text-[9px] bg-rose-200 text-rose-900 px-1 rounded font-bold">({unpaidCount} mos)</span>
+                          )}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Quick Pay Button on Mobile */}
+                    {!isReadOnly && !m.paidCurrent && sub.status !== 'Inactive' && sub.status !== 'Exclude' && (
+                      <button
+                        type="button"
+                        onClick={(e) => handleOpenPaymentConfirm(sub, e)}
+                        className="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 text-white rounded-lg text-xs font-bold shadow-2xs flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>Record Pay</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Desktop View: Full Data Table (Hidden on small screens < md) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
@@ -756,8 +937,13 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
           <div>
             Showing <span className="font-semibold text-slate-700">{filteredSubs.length}</span> of{' '}
             <span className="font-semibold text-slate-700">{subscribers.length}</span> subscribers
-            {statusFilter === 'all' && inactiveSubsCount > 0 && (
-              <span className="text-slate-400 ml-1.5 font-normal">({inactiveSubsCount} inactive excluded)</span>
+            {statusFilter === 'all' && (inactiveSubsCount > 0 || excludedSubsCount > 0) && (
+              <span className="text-slate-400 ml-1.5 font-normal">
+                ({[
+                  inactiveSubsCount > 0 ? `${inactiveSubsCount} inactive` : '',
+                  excludedSubsCount > 0 ? `${excludedSubsCount} excluded` : '',
+                ].filter(Boolean).join(', ')} hidden)
+              </span>
             )}
           </div>
           <div className="text-[11px] text-slate-400">
