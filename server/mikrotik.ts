@@ -401,23 +401,223 @@ export async function deleteDhcpLease(
   }
 }
 
+function extractVlanNumberFromText(text?: string): number | undefined {
+  if (!text) return undefined;
+  const match = text.match(/(?:^|[^a-z0-9])vlan[-_.\s]*(\d+)(?:$|[^0-9])/i);
+  if (match) {
+    const parsed = parseInt(match[1], 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function normalizeMacHex(mac?: string): string {
+  return (mac || '').trim().toLowerCase().replace(/[^a-f0-9]/g, '');
+}
+
+export function doesLeaseMatchSubscriber(lease: any, sub: any): boolean {
+  if (!lease || !sub || lease.disabled) return false;
+
+  // 1. Exact 12-hex MAC address match (highest precision)
+  const subMac = normalizeMacHex(sub.macAddress);
+  const leaseMac = normalizeMacHex(lease.macAddress);
+  if (subMac.length === 12 && leaseMac.length === 12) {
+    if (leaseMac === subMac) return true;
+  }
+
+  const subVlan = sub.vlan !== null && sub.vlan !== undefined && !isNaN(Number(sub.vlan)) && Number(sub.vlan) > 0
+    ? Number(sub.vlan)
+    : null;
+
+  // If RouterOS resolved the lease's exact VLAN ID from DHCP server -> interface, enforce it strictly
+  const leaseVlanId = lease.vlanId !== undefined && lease.vlanId !== null && !isNaN(Number(lease.vlanId)) && Number(lease.vlanId) > 0
+    ? Number(lease.vlanId)
+    : null;
+  if (leaseVlanId !== null) {
+    if (subVlan !== null && leaseVlanId === subVlan) return true;
+    // Do not fall back to fuzzy IP/comment guesses if we already know this lease belongs to a different VLAN
+    if (subVlan !== null && leaseVlanId !== subVlan) return false;
+  }
+
+  // 2. Exact VLAN token match on interface / DHCP server / IP subnet
+  if (subVlan !== null) {
+    const vlanPattern = new RegExp(`(?:^|[^0-9])(?:vlan|dhcp)[-_.\s]*${subVlan}(?:$|[^0-9])`, 'i');
+    if (lease.interface && vlanPattern.test(String(lease.interface))) return true;
+    if (lease.server) {
+      const srv = String(lease.server).trim();
+      if (vlanPattern.test(srv) || srv === String(subVlan)) return true;
+    }
+
+    // Check IPv4 third-octet subnet ONLY on standard per-VLAN subnets (never substring .includes('.16.')!)
+    if (lease.address && subVlan <= 254) {
+      const cleanIp = String(lease.address).trim().split('/')[0];
+      const octets = cleanIp.split('.');
+      if (octets.length === 4 && octets[2] === String(subVlan)) {
+        const o0 = octets[0];
+        const o1 = octets[1];
+        if ((o0 === '172' && o1 === '16') || (o0 === '192' && o1 === '168') || (o0 === '10' && o1 === '0')) {
+          return true;
+        }
+      }
+    }
+  }
+
+  // 3. Exact boundary match in RouterOS lease comment (e.g. "Subscriber #5", "ID #5", "VLAN 10")
+  if (lease.comment) {
+    const comment = String(lease.comment);
+    const idRegex = new RegExp(`(?:^|[^0-9])(?:subscriber\\s*#|id\\s*#|sub[_\\s#-]+)${sub.id}(?:$|[^0-9])`, 'i');
+    if (idRegex.test(comment)) return true;
+    if (subVlan !== null) {
+      const vlanCommentRegex = new RegExp(`(?:^|[^0-9])vlan[-_\\s]*${subVlan}(?:$|[^0-9])`, 'i');
+      if (vlanCommentRegex.test(comment)) return true;
+    }
+  }
+
+  return false;
+}
+
 export async function getRouterDhcpLeases(db: SqliteWrapper, subscribers: any[] = []) {
   const cfg = getMikrotikConfig(db);
 
   try {
-    const leases = await fetchFromRouterOS(cfg, 'ip/dhcp-server/lease');
+    // Query live RouterOS DHCP leases plus DHCP server/interface/address tables in parallel
+    // so server names like "dhcp1" on interface "vlan10" resolve accurately to VLAN 10.
+    const [leasesRaw, serversRaw, interfacesRaw, ipAddressesRaw] = await Promise.all([
+      fetchFromRouterOS(cfg, 'ip/dhcp-server/lease', 'GET', undefined, 5000),
+      fetchFromRouterOS(cfg, 'ip/dhcp-server', 'GET', undefined, 5000).catch(() => []),
+      fetchFromRouterOS(cfg, 'interface', 'GET', undefined, 5000).catch(() => []),
+      fetchFromRouterOS(cfg, 'ip/address', 'GET', undefined, 5000).catch(() => []),
+    ]);
+
+    const ifaceVlanMap = new Map<string, number>();
+    if (Array.isArray(interfacesRaw)) {
+      for (const iface of interfacesRaw) {
+        const name = String(iface?.name || '').trim();
+        if (!name) continue;
+        const explicitVlan = iface['vlan-id'] ? parseInt(String(iface['vlan-id']), 10) : NaN;
+        const vlanId = !isNaN(explicitVlan) && explicitVlan > 0
+          ? explicitVlan
+          : extractVlanNumberFromText(name) || extractVlanNumberFromText(iface?.comment);
+        if (vlanId) {
+          ifaceVlanMap.set(name.toLowerCase(), vlanId);
+        }
+      }
+    }
+
+    const serverInfoMap = new Map<string, { interfaceName?: string; vlanId?: number }>();
+    if (Array.isArray(serversRaw)) {
+      for (const srv of serversRaw) {
+        const srvName = String(srv?.name || '').trim();
+        const ifaceName = String(srv?.interface || '').trim();
+        if (!srvName) continue;
+        const vlanId =
+          (ifaceName ? ifaceVlanMap.get(ifaceName.toLowerCase()) : undefined) ||
+          extractVlanNumberFromText(ifaceName) ||
+          extractVlanNumberFromText(srvName) ||
+          extractVlanNumberFromText(srv?.comment);
+        serverInfoMap.set(srvName.toLowerCase(), {
+          interfaceName: ifaceName || undefined,
+          vlanId,
+        });
+      }
+    }
+
+    // Map /ip/address gateway networks (e.g. 172.16.20.1/24 -> 172.16.20.0/24 on vlan20) to VLAN IDs
+    const cidrVlanList: Array<{ networkInt: number; maskInt: number; vlanId: number; ifaceName: string }> = [];
+    if (Array.isArray(ipAddressesRaw)) {
+      for (const addr of ipAddressesRaw) {
+        if (addr?.disabled === 'true' || addr?.disabled === true) continue;
+        const ifaceName = String(addr?.interface || '').trim();
+        const vlanId =
+          (ifaceName ? ifaceVlanMap.get(ifaceName.toLowerCase()) : undefined) ||
+          extractVlanNumberFromText(ifaceName) ||
+          extractVlanNumberFromText(addr?.comment);
+        const rawAddr = String(addr?.address || '').trim();
+        const [ipPart, prefixPart] = rawAddr.split('/');
+        const prefixLen = parseInt(prefixPart || '', 10);
+        if (vlanId && ipPart && !isNaN(prefixLen) && prefixLen >= 8 && prefixLen <= 30) {
+          const octets = ipPart.split('.').map(Number);
+          if (octets.length === 4 && octets.every((n) => !isNaN(n) && n >= 0 && n <= 255)) {
+            const ipInt = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+            const maskInt = (0xffffffff << (32 - prefixLen)) >>> 0;
+            cidrVlanList.push({
+              networkInt: (ipInt & maskInt) >>> 0,
+              maskInt,
+              vlanId,
+              ifaceName,
+            });
+          }
+        }
+      }
+    }
+
+    const resolveVlanByIp = (ip?: string): { vlanId?: number; ifaceName?: string } => {
+      if (!ip) return {};
+      const clean = ip.trim().split('/')[0];
+      const octets = clean.split('.').map(Number);
+      if (octets.length !== 4 || octets.some((n) => isNaN(n) || n < 0 || n > 255)) return {};
+      const ipInt = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+      for (const entry of cidrVlanList) {
+        if (((ipInt & entry.maskInt) >>> 0) === entry.networkInt) {
+          return { vlanId: entry.vlanId, ifaceName: entry.ifaceName };
+        }
+      }
+      return {};
+    };
+
+    const parsedLeases = (Array.isArray(leasesRaw) ? leasesRaw : [])
+      .map((l: any) => {
+        const disabled = l.disabled === 'true' || l.disabled === true;
+        const dynamic = l.dynamic === 'true' || l.dynamic === true;
+        const activeAddr = String(l['active-address'] || '').trim();
+        const configuredAddr = String(l.address || '').trim();
+        const address = activeAddr || configuredAddr;
+        const activeMac = String(l['active-mac-address'] || '').trim();
+        const configuredMac = String(l['mac-address'] || '').trim();
+        const macAddress = activeMac || configuredMac;
+        const server = String(l['active-server'] || l.server || 'default').trim();
+        const rawStatus = String(l.status || '').trim().toLowerCase();
+        const status = rawStatus || (activeAddr ? 'bound' : 'waiting');
+
+        const srvInfo = serverInfoMap.get(server.toLowerCase());
+        const ipInfo = resolveVlanByIp(address);
+        const vlanId =
+          srvInfo?.vlanId ||
+          extractVlanNumberFromText(server) ||
+          ipInfo.vlanId ||
+          extractVlanNumberFromText(l.comment);
+        const resolvedInterface = srvInfo?.interfaceName || ipInfo.ifaceName;
+
+        return {
+          id: l['.id'],
+          address,
+          macAddress,
+          hostName: String(l['host-name'] || '').trim(),
+          server,
+          interface: resolvedInterface,
+          vlanId,
+          status,
+          disabled,
+          dynamic,
+          lastSeen: String(l['last-seen'] || '').trim() || undefined,
+          expiresAfter: String(l['expires-after'] || '').trim() || undefined,
+          comment: String(l.comment || '').trim(),
+        };
+      })
+      // Exclude disabled leases and empty-IP placeholder rows
+      .filter((l: any) => !l.disabled && Boolean(l.address))
+      // Show active bound leases first, then waiting/offered leases
+      .sort((a: any, b: any) => {
+        const aBound = a.status === 'bound' ? 0 : 1;
+        const bBound = b.status === 'bound' ? 0 : 1;
+        return aBound - bBound;
+      });
+
     return {
       success: true,
-      leases: (Array.isArray(leases) ? leases : []).map((l: any) => ({
-        id: l['.id'],
-        address: l.address,
-        macAddress: l['mac-address'],
-        hostName: l['host-name'] || '',
-        server: l.server || 'default',
-        status: l.status || 'bound',
-        disabled: l.disabled === 'true' || l.disabled === true,
-        comment: l.comment || '',
-      })),
+      mode: 'live' as const,
+      fetchedAt: new Date().toISOString(),
+      leases: parsedLeases,
     };
   } catch (err: any) {
     // If the router is unreachable in preview/offline sandbox, generate fallback DHCP leases matching the 172.16.x.x network format
@@ -432,8 +632,11 @@ export async function getRouterDhcpLeases(db: SqliteWrapper, subscribers: any[] 
           macAddress: sub.macAddress || `48:8F:5A:${String(thirdOctet).padStart(2, '0')}:12:34`,
           hostName: `${sub.last}-ONU`,
           server: `vlan${vlanNum}`,
+          interface: `vlan${vlanNum}`,
+          vlanId: vlanNum,
           status: 'bound',
           disabled: false,
+          dynamic: true,
           comment: `Subscriber #${sub.id} - ${sub.first} ${sub.last}`,
         });
         fallbackLeases.push({
@@ -442,13 +645,22 @@ export async function getRouterDhcpLeases(db: SqliteWrapper, subscribers: any[] 
           macAddress: `A4:C3:61:${String(thirdOctet).padStart(2, '0')}:56:78`,
           hostName: `${sub.first}-Device`,
           server: `vlan${vlanNum}`,
+          interface: `vlan${vlanNum}`,
+          vlanId: vlanNum,
           status: 'bound',
           disabled: false,
+          dynamic: true,
           comment: `Subscriber #${sub.id} - ${sub.first} ${sub.last}`,
         });
       }
     }
-    return { success: true, mode: 'fallback', leases: fallbackLeases };
+    return {
+      success: true,
+      mode: 'fallback' as const,
+      error: err?.message || 'RouterOS unreachable',
+      fetchedAt: new Date().toISOString(),
+      leases: fallbackLeases,
+    };
   }
 }
 
@@ -755,23 +967,9 @@ export async function getAddressesForSubscriber(db: SqliteWrapper, sub: any, sub
   try {
     const dhcpRes = await getRouterDhcpLeases(db, subscribers);
     const leases = dhcpRes.leases || [];
-    const vlanStr = sub.vlan !== null && sub.vlan !== undefined ? String(sub.vlan) : null;
-    const subMac = (sub.macAddress || '').trim().toLowerCase().replace(/[:-]/g, '');
 
     for (const lease of leases) {
-      let matches = false;
-      if (subMac && lease.macAddress) {
-        const leaseMac = lease.macAddress.trim().toLowerCase().replace(/[:-]/g, '');
-        if (leaseMac === subMac) matches = true;
-      }
-      if (vlanStr) {
-        if (lease.server && (lease.server.includes(`vlan${vlanStr}`) || lease.server.includes(`vlan-${vlanStr}`))) matches = true;
-        if (lease.address && (lease.address.startsWith(`192.168.${vlanStr}.`) || lease.address.startsWith(`172.16.${vlanStr}.`))) matches = true;
-      }
-      if (lease.comment && (lease.comment.includes(`ID #${sub.id}`) || lease.comment.includes(`Subscriber #${sub.id}`))) {
-        matches = true;
-      }
-      if (matches && lease.address) {
+      if (doesLeaseMatchSubscriber(lease, sub) && lease.address) {
         addresses.add(lease.address.trim());
       }
     }

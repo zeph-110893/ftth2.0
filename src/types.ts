@@ -107,8 +107,13 @@ export interface MikroTikDhcpLease {
   macAddress: string;
   hostName?: string;
   server: string;
+  interface?: string;
+  vlanId?: number;
   status: string;
   disabled: boolean;
+  dynamic?: boolean;
+  lastSeen?: string;
+  expiresAfter?: string;
   comment?: string;
 }
 

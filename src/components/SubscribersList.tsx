@@ -8,11 +8,19 @@ interface SubscribersListProps {
   subscribers: Subscriber[];
   payments: PaymentRecord[];
   dhcpLeases?: MikroTikDhcpLease[];
+  leasesMode?: 'live' | 'fallback' | null;
   mikrotikInterfaces?: MikroTikInterface[];
   currentUser?: AuthUser | null;
   onSelectSubscriber: (sub: Subscriber) => void;
   onAddSubscriber: () => void;
   onRefreshData?: () => Promise<void> | void;
+  onSyncLeases?: () => Promise<{
+    success: boolean;
+    leases: MikroTikDhcpLease[];
+    mode: 'live' | 'fallback' | null;
+    error?: string;
+  }>;
+  isSyncingLeases?: boolean;
   onAddPayment?: (payment: PaymentRecord) => void;
 }
 
@@ -20,11 +28,14 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   subscribers,
   payments,
   dhcpLeases = [],
+  leasesMode = null,
   mikrotikInterfaces = [],
   currentUser,
   onSelectSubscriber,
   onAddSubscriber,
   onRefreshData,
+  onSyncLeases,
+  isSyncingLeases = false,
   onAddPayment,
 }) => {
   const isReadOnly = !canWrite(currentUser);
@@ -95,6 +106,33 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
     const status = getSubscriberBillingStatus(sub, payments);
     return status === 'overdue' && sub.vlan && sub.vlan > 0;
   });
+
+  const handleSyncLeasesClick = async () => {
+    setActionNotification(null);
+    if (onSyncLeases) {
+      const result = await onSyncLeases();
+      if (result.success) {
+        if (result.mode === 'fallback') {
+          setActionNotification({
+            type: 'info',
+            message: `RouterOS unreachable (${result.error || 'connection failed'}). Showing ${result.leases.length} simulated fallback DHCP leases — verify RouterOS host/credentials in MikroTik RouterOS tab.`,
+          });
+        } else {
+          setActionNotification({
+            type: 'success',
+            message: `Synced ${result.leases.length} live DHCP lease${result.leases.length === 1 ? '' : 's'} from MikroTik RouterOS.`,
+          });
+        }
+      } else {
+        setActionNotification({
+          type: 'error',
+          message: result.error || 'Failed to sync DHCP leases from MikroTik RouterOS.',
+        });
+      }
+    } else if (onRefreshData) {
+      await onRefreshData();
+    }
+  };
 
   const handleDisableAllOverdueVlans = async () => {
     setIsDisablingOverdue(true);
@@ -398,6 +436,25 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
               <option value="unpaid">Unpaid Only</option>
             </select>
           </div>
+
+          {/* Sync DHCP Leases Button */}
+          {(onSyncLeases || onRefreshData) && (
+            <button
+              type="button"
+              onClick={handleSyncLeasesClick}
+              disabled={isSyncingLeases}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto min-h-[34px]"
+              title="Query MikroTik RouterOS for newly connected DHCP lease devices"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-cyan-600 shrink-0 ${isSyncingLeases ? 'animate-spin' : ''}`} />
+              <span>{isSyncingLeases ? 'Syncing Leases...' : 'Sync Leases'}</span>
+              {leasesMode === 'fallback' && (
+                <span className="px-1.5 py-0.2 bg-amber-100 text-amber-800 border border-amber-300 text-[9px] font-bold rounded uppercase">
+                  Offline
+                </span>
+              )}
+            </button>
+          )}
 
           {/* Disable All Overdue VLANs Button */}
           {!isReadOnly && (

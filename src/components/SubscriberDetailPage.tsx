@@ -57,6 +57,7 @@ interface SubscriberDetailPageProps {
   subscribers?: Subscriber[];
   payments: PaymentRecord[];
   dhcpLeases?: MikroTikDhcpLease[];
+  leasesMode?: 'live' | 'fallback' | null;
   mikrotikInterfaces?: MikroTikInterface[];
   currentUser?: AuthUser | null;
   previousTabName?: string;
@@ -64,6 +65,13 @@ interface SubscriberDetailPageProps {
   onUpdateSubscriber: (updated: Subscriber) => void;
   onDeleteSubscriber: (subId: number) => void;
   onDeleteDhcpLease?: (leaseId: string, macAddress?: string) => Promise<boolean>;
+  onSyncLeases?: () => Promise<{
+    success: boolean;
+    leases: MikroTikDhcpLease[];
+    mode: 'live' | 'fallback' | null;
+    error?: string;
+  }>;
+  isSyncingLeases?: boolean;
   onAddPayment: (payment: PaymentRecord) => void;
   onDeletePayment: (ts: string, subId: number, month: string) => void;
 }
@@ -73,6 +81,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
   subscribers = [],
   payments,
   dhcpLeases = [],
+  leasesMode = null,
   mikrotikInterfaces = [],
   currentUser,
   previousTabName = 'subscribers',
@@ -80,6 +89,8 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
   onUpdateSubscriber,
   onDeleteSubscriber,
   onDeleteDhcpLease,
+  onSyncLeases,
+  isSyncingLeases = false,
   onAddPayment,
   onDeletePayment,
 }) => {
@@ -111,10 +122,11 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
   const [suspensionMsg, setSuspensionMsg] = useState<{ text: string; isError?: boolean } | null>(null);
   const [showSuspendConfirm, setShowSuspendConfirm] = useState<boolean>(false);
 
-  // State for DHCP lease deletion
+  // State for DHCP lease deletion & syncing
   const [leaseToDelete, setLeaseToDelete] = useState<MikroTikDhcpLease | null>(null);
   const [isDeletingLease, setIsDeletingLease] = useState<boolean>(false);
   const [leaseDeleteMsg, setLeaseDeleteMsg] = useState<{ text: string; isError?: boolean } | null>(null);
+  const [leaseSyncMsg, setLeaseSyncMsg] = useState<{ text: string; isError?: boolean } | null>(null);
 
   // State for inline editing RATE
   const [isEditingRate, setIsEditingRate] = useState(false);
@@ -188,6 +200,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
     setPaymentRefNo('');
     setVlanToggleMsg(null);
     setLeaseDeleteMsg(null);
+    setLeaseSyncMsg(null);
     setPingResults({});
     setPingSummary(null);
     setIsPingingAll(false);
@@ -612,6 +625,32 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
         isError: true,
       });
       setLeaseToDelete(null);
+    }
+  };
+
+  // Sync fresh DHCP leases from MikroTik RouterOS
+  const handleSyncSubscriberLeases = async () => {
+    if (!onSyncLeases || !subscriber) return;
+    setLeaseSyncMsg(null);
+    const res = await onSyncLeases();
+    if (res.success) {
+      const matched = getLeasesForSubscriber(subscriber, res.leases);
+      if (res.mode === 'fallback') {
+        setLeaseSyncMsg({
+          text: `RouterOS unreachable (${res.error || 'connection timeout'}). Showing ${matched.length} simulated fallback device${matched.length === 1 ? '' : 's'} — check MikroTik settings.`,
+          isError: true,
+        });
+      } else {
+        setLeaseSyncMsg({
+          text: `Synced ${res.leases.length} live lease${res.leases.length === 1 ? '' : 's'} from RouterOS — ${matched.length} device${matched.length === 1 ? '' : 's'} matched for ${subscriber.vlan ? `VLAN ${subscriber.vlan}` : 'this subscriber'}.`,
+          isError: false,
+        });
+      }
+    } else {
+      setLeaseSyncMsg({
+        text: res.error || 'Failed to sync DHCP leases from RouterOS.',
+        isError: true,
+      });
     }
   };
 
@@ -1682,32 +1721,56 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                 >
                   {subLeases.length} {subLeases.length === 1 ? 'device' : 'devices'}
                 </span>
-                <span className="text-[10px] font-bold px-2 py-0.5 bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-full">
-                  ARP-Ping
-                </span>
+                {leasesMode === 'fallback' ? (
+                  <span
+                    className="text-[10px] font-bold px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded-full"
+                    title="MikroTik RouterOS could not be reached; displaying simulated fallback leases"
+                  >
+                    Offline Fallback
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold px-2 py-0.5 bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-full">
+                    ARP-Ping
+                  </span>
+                )}
               </div>
 
-              {subLeases.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handlePingAllLeases}
-                  disabled={isPingingAll}
-                  className="w-full sm:w-auto justify-center px-3.5 py-2 sm:py-1.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all min-h-[38px] sm:min-h-[34px]"
-                  title="Send Layer-2 ARP-Ping packets (bypasses client firewall ICMP blocks)"
-                >
-                  {isPingingAll ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>ARP-Pinging...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Radio className="w-3.5 h-3.5" />
-                      <span>Verify ARP-Ping</span>
-                    </>
-                  )}
-                </button>
-              )}
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                {onSyncLeases && (
+                  <button
+                    type="button"
+                    onClick={handleSyncSubscriberLeases}
+                    disabled={isSyncingLeases}
+                    className="flex-1 sm:flex-initial justify-center px-3 py-2 sm:py-1.5 rounded-xl text-xs font-bold bg-white hover:bg-cyan-50 text-cyan-700 border border-cyan-200 shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all min-h-[38px] sm:min-h-[34px]"
+                    title="Fetch newly connected DHCP lease devices from MikroTik RouterOS"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingLeases ? 'animate-spin' : ''}`} />
+                    <span>{isSyncingLeases ? 'Syncing...' : 'Sync Leases'}</span>
+                  </button>
+                )}
+
+                {subLeases.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handlePingAllLeases}
+                    disabled={isPingingAll}
+                    className="flex-1 sm:flex-initial justify-center px-3.5 py-2 sm:py-1.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all min-h-[38px] sm:min-h-[34px]"
+                    title="Send Layer-2 ARP-Ping packets (bypasses client firewall ICMP blocks)"
+                  >
+                    {isPingingAll ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>ARP-Pinging...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Radio className="w-3.5 h-3.5" />
+                        <span>Verify ARP-Ping</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Diagnostic Summary Bar */}
@@ -1730,6 +1793,25 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                 <span className="text-[11px] text-slate-400 font-mono">
                   {pingSummary.timestamp}
                 </span>
+              </div>
+            )}
+
+            {/* Sync Lease Feedback */}
+            {leaseSyncMsg && (
+              <div
+                className={`mx-4 sm:mx-5 my-3 px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-between transition-all ${
+                  leaseSyncMsg.isError
+                    ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                    : 'bg-cyan-50 text-cyan-800 border border-cyan-200'
+                }`}
+              >
+                <span>{leaseSyncMsg.text}</span>
+                <button
+                  onClick={() => setLeaseSyncMsg(null)}
+                  className="text-slate-400 hover:text-slate-700 cursor-pointer ml-2 text-xs"
+                >
+                  ✕
+                </button>
               </div>
             )}
 
@@ -1786,6 +1868,10 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                             </button>
                           </div>
                         )}
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5 flex flex-wrap items-center gap-x-2">
+                          <span>{lease.interface || lease.server}</span>
+                          {lease.lastSeen && <span>• Seen: {lease.lastSeen}</span>}
+                        </div>
                       </div>
                       <span
                         className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0 ${
@@ -1864,6 +1950,11 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                           {lease.macAddress && (
                             <div className="text-[11px] font-mono text-slate-400 font-normal">{lease.macAddress}</div>
                           )}
+                          <div className="text-[10px] font-mono text-slate-400 font-normal flex flex-wrap items-center gap-x-2 mt-0.5">
+                            <span>{lease.interface || lease.server}</span>
+                            {lease.lastSeen && <span>• Last seen: {lease.lastSeen}</span>}
+                            {lease.expiresAfter && <span>• Expires: {lease.expiresAfter}</span>}
+                          </div>
                         </td>
                         <td className="py-3 px-4 text-center whitespace-nowrap">
                           <span

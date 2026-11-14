@@ -133,11 +133,12 @@ export const Header: React.FC<HeaderProps> = ({
                   type="button"
                   onClick={onRefresh}
                   disabled={isSyncing}
-                  title="Sync and refresh live data"
-                  className="p-0.5 sm:p-1 rounded-full hover:bg-slate-800 text-slate-400 hover:text-cyan-400 transition-all cursor-pointer disabled:opacity-50"
-                  aria-label="Refresh data"
+                  title="Sync billing data & fetch fresh DHCP leases from MikroTik RouterOS"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-800/80 hover:bg-cyan-500/20 text-slate-300 hover:text-cyan-300 border border-slate-700/80 hover:border-cyan-500/40 transition-all cursor-pointer disabled:opacity-50 text-[11px] font-semibold font-sans"
+                  aria-label="Sync and refresh live data"
                 >
                   <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin text-cyan-400' : ''}`} />
+                  <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Sync'}</span>
                 </button>
               )}
             </div>

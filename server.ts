@@ -12,6 +12,7 @@ import {
   getRouterSecrets,
   getRouterActiveSessions,
   getRouterDhcpLeases,
+  doesLeaseMatchSubscriber,
   getRouterIpAddresses,
   getRouterAddressLists,
   getSubscriberSuspensionStatus,
@@ -676,16 +677,7 @@ async function startServer() {
             (l: any) => l.address && String(l.address).trim().split('/')[0] === requestIp && !String(l.id || '').startsWith('*sim-')
           );
           if (leaseForIp) {
-            const leaseMac = String(leaseForIp.macAddress || '').trim().toLowerCase();
-            const leaseComment = String(leaseForIp.comment || '').toLowerCase();
-            const leaseServer = String(leaseForIp.server || '').toLowerCase();
-
-            const matchedSubs = subscribers.filter((s: any) => {
-              if (leaseMac && s.macAddress && String(s.macAddress).trim().toLowerCase() === leaseMac) return true;
-              if (leaseComment && (leaseComment.includes(`id #${s.id}`) || leaseComment.includes(`subscriber #${s.id}`))) return true;
-              if (s.vlan && leaseServer && (leaseServer === `vlan${s.vlan}` || leaseServer === `vlan-${s.vlan}` || leaseServer === `dhcp${s.vlan}`)) return true;
-              return false;
-            });
+            const matchedSubs = subscribers.filter((s: any) => doesLeaseMatchSubscriber(leaseForIp, s));
 
             if (matchedSubs.length === 1) {
               selectedSub = matchedSubs[0];
@@ -829,16 +821,9 @@ async function startServer() {
         running: targetIface?.running !== false,
       };
 
-      // Filter and sanitize Connected Devices (DHCP Leases)
+      // Filter and sanitize Connected Devices (DHCP Leases) using exact boundary matching
       // STRICT REQUIREMENT: In DHCP list DO NOT show MAC address, ONLY device name + IP
-      const matchingLeases: any[] = allLeases.filter((l: any) => {
-        if (selectedSub.macAddress && l.macAddress && l.macAddress.toLowerCase() === selectedSub.macAddress.toLowerCase()) return true;
-        if (l.comment && (l.comment.toLowerCase().includes(`id #${selectedSub.id}`) || l.comment.toLowerCase().includes(`subscriber #${selectedSub.id}`))) return true;
-        if (targetVlan && l.server && l.server.toLowerCase().includes(`vlan${targetVlan}`)) return true;
-        if (targetVlan && l.address && l.address.includes(`.${targetVlan}.`)) return true;
-        if (lastName && l.comment && l.comment.toLowerCase().includes(lastName.toLowerCase())) return true;
-        return false;
-      });
+      const matchingLeases: any[] = allLeases.filter((l: any) => doesLeaseMatchSubscriber(l, selectedSub));
 
       // Resolve the ONU's live IPoE WAN IP from MikroTik DHCP leases (ignoring simulated fallback leases)
       let onuWanIp: string | null = null;
@@ -1716,6 +1701,7 @@ async function startServer() {
   });
 
   app.get('/api/mikrotik/interfaces', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     try {
       const subscribers = await db.all('SELECT * FROM subscribers');
       const result = await getRouterInterfaces(db, subscribers);
@@ -1755,6 +1741,7 @@ async function startServer() {
   });
 
   app.get('/api/mikrotik/leases', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     try {
       const subscribers = await db.all('SELECT * FROM subscribers');
       const result = await getRouterDhcpLeases(db, subscribers);

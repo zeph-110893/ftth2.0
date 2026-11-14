@@ -49,10 +49,12 @@ export default function App() {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [dhcpLeases, setDhcpLeases] = useState<MikroTikDhcpLease[]>([]);
+  const [leasesMode, setLeasesMode] = useState<'live' | 'fallback' | null>(null);
   const [mikrotikInterfaces, setMikrotikInterfaces] = useState<MikroTikInterface[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastSyncedTime, setLastSyncedTime] = useState<Date>(new Date());
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [isSyncingLeases, setIsSyncingLeases] = useState<boolean>(false);
 
   // Sync browser back/forward buttons with admin/portal views
   useEffect(() => {
@@ -148,7 +150,7 @@ export default function App() {
     return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
   }, []);
 
-  // Fetch initial data or perform background sync (2 requests/min = every 30s)
+  // Fetch initial data or perform full refresh (always cache-busted for live MikroTik leases)
   const fetchData = async (isSilent = false) => {
     if (!currentUser && !getAuthToken()) return;
 
@@ -159,10 +161,11 @@ export default function App() {
         setIsSyncing(true);
       }
 
+      const ts = Date.now();
       const [resData, resLeases, resInterfaces] = await Promise.all([
-        authFetch('/api/data'),
-        authFetch('/api/mikrotik/leases').catch(() => null),
-        authFetch('/api/mikrotik/interfaces').catch(() => null),
+        authFetch(`/api/data?_t=${ts}`, { cache: 'no-store' }),
+        authFetch(`/api/mikrotik/leases?_t=${ts}`, { cache: 'no-store' }).catch(() => null),
+        authFetch(`/api/mikrotik/interfaces?_t=${ts}`, { cache: 'no-store' }).catch(() => null),
       ]);
 
       if (resData.ok) {
@@ -176,6 +179,7 @@ export default function App() {
         const leaseData = await resLeases.json();
         if (leaseData.success) {
           setDhcpLeases(leaseData.leases || []);
+          setLeasesMode(leaseData.mode === 'fallback' ? 'fallback' : 'live');
         }
       }
 
@@ -193,6 +197,74 @@ export default function App() {
         setIsLoading(false);
       }
       setIsSyncing(false);
+    }
+  };
+
+  // Dedicated fast sync for fresh DHCP leases & interfaces from RouterOS
+  const syncDhcpLeases = async (): Promise<{
+    success: boolean;
+    leases: MikroTikDhcpLease[];
+    mode: 'live' | 'fallback' | null;
+    error?: string;
+  }> => {
+    if (!currentUser && !getAuthToken()) {
+      return { success: false, leases: [], mode: null, error: 'Not authenticated' };
+    }
+    setIsSyncingLeases(true);
+    try {
+      const ts = Date.now();
+      const [resLeases, resInterfaces] = await Promise.all([
+        authFetch(`/api/mikrotik/leases?_t=${ts}`, { cache: 'no-store' }),
+        authFetch(`/api/mikrotik/interfaces?_t=${ts}`, { cache: 'no-store' }).catch(() => null),
+      ]);
+
+      if (resInterfaces && resInterfaces.ok) {
+        const ifaceData = await resInterfaces.json();
+        if (ifaceData.success) {
+          setMikrotikInterfaces(ifaceData.interfaces || []);
+        }
+      }
+
+      if (!resLeases.ok) {
+        const errBody = await resLeases.json().catch(() => ({}));
+        return {
+          success: false,
+          leases: dhcpLeases,
+          mode: leasesMode,
+          error: errBody.error || `HTTP ${resLeases.status}`,
+        };
+      }
+
+      const leaseData = await resLeases.json();
+      if (leaseData.success) {
+        const nextLeases: MikroTikDhcpLease[] = leaseData.leases || [];
+        const nextMode: 'live' | 'fallback' = leaseData.mode === 'fallback' ? 'fallback' : 'live';
+        setDhcpLeases(nextLeases);
+        setLeasesMode(nextMode);
+        setLastSyncedTime(new Date());
+        return {
+          success: true,
+          leases: nextLeases,
+          mode: nextMode,
+          error: leaseData.error,
+        };
+      }
+
+      return {
+        success: false,
+        leases: dhcpLeases,
+        mode: leasesMode,
+        error: leaseData.error || 'Failed to sync DHCP leases',
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        leases: dhcpLeases,
+        mode: leasesMode,
+        error: err?.message || 'Network error while syncing DHCP leases',
+      };
+    } finally {
+      setIsSyncingLeases(false);
     }
   };
 
@@ -523,6 +595,7 @@ export default function App() {
             subscribers={subscribers}
             payments={payments}
             dhcpLeases={dhcpLeases}
+            leasesMode={leasesMode}
             mikrotikInterfaces={mikrotikInterfaces}
             currentUser={currentUser}
             previousTabName={currentTab}
@@ -530,6 +603,8 @@ export default function App() {
             onUpdateSubscriber={handleSaveSubscriber}
             onDeleteSubscriber={handleDeleteSubscriber}
             onDeleteDhcpLease={handleDeleteDhcpLease}
+            onSyncLeases={syncDhcpLeases}
+            isSyncingLeases={isSyncingLeases}
             onAddPayment={handleSavePayment}
             onDeletePayment={handleDeletePayment}
           />
@@ -540,11 +615,14 @@ export default function App() {
                 subscribers={subscribers}
                 payments={payments}
                 dhcpLeases={dhcpLeases}
+                leasesMode={leasesMode}
                 mikrotikInterfaces={mikrotikInterfaces}
                 currentUser={currentUser}
                 onSelectSubscriber={(sub) => handleSelectSubscriber(sub)}
                 onAddSubscriber={() => setIsAddSubOpen(true)}
                 onRefreshData={fetchData}
+                onSyncLeases={syncDhcpLeases}
+                isSyncingLeases={isSyncingLeases}
                 onAddPayment={handleSavePayment}
               />
             )}

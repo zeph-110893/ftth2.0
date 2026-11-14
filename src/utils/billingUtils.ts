@@ -363,37 +363,84 @@ export function exportToCSV(subs: Subscriber[], payments: PaymentRecord[]) {
   document.body.removeChild(link);
 }
 
+function normalizeMacHex(mac?: string): string {
+  return (mac || '').trim().toLowerCase().replace(/[^a-f0-9]/g, '');
+}
+
 export function getLeasesForSubscriber(sub: Subscriber, leases: MikroTikDhcpLease[] = []): MikroTikDhcpLease[] {
   if (!sub || !Array.isArray(leases) || leases.length === 0) return [];
-  const vlan = sub.vlan;
-  const vlanStr = vlan !== null && vlan !== undefined ? String(vlan) : null;
-  const vlanPrefix1 = vlanStr ? `172.16.${vlanStr}.` : null;
-  const vlanPrefix2 = vlanStr ? `192.168.${vlanStr}.` : null;
-  const subIdStr = `Subscriber #${sub.id}`;
-  const idStr = `ID #${sub.id}`;
-  const subName = `${sub.first} ${sub.last}`.toLowerCase();
-  const subMac = (sub.macAddress || '').trim().toLowerCase().replace(/[:-]/g, '');
+  const subVlan =
+    sub.vlan !== null && sub.vlan !== undefined && !isNaN(Number(sub.vlan)) && Number(sub.vlan) > 0
+      ? Number(sub.vlan)
+      : null;
+  const subMac = normalizeMacHex(sub.macAddress);
 
-  return leases.filter((lease) => {
-    // 1. Direct MAC address match if subscriber has ONU MAC address configured
-    if (subMac && lease.macAddress) {
-      const leaseMacClean = lease.macAddress.trim().toLowerCase().replace(/[:-]/g, '');
-      if (leaseMacClean === subMac || leaseMacClean.includes(subMac) || subMac.includes(leaseMacClean)) {
+  const vlanTokenRegex = subVlan !== null
+    ? new RegExp(`(?:^|[^0-9])(?:vlan|dhcp)[-_.\s]*${subVlan}(?:$|[^0-9])`, 'i')
+    : null;
+  const commentIdRegex = new RegExp(
+    `(?:^|[^0-9])(?:subscriber\\s*#|id\\s*#|sub[_\\s#-]+)${sub.id}(?:$|[^0-9])`,
+    'i'
+  );
+  const commentVlanRegex = subVlan !== null
+    ? new RegExp(`(?:^|[^0-9])vlan[-_\\s]*${subVlan}(?:$|[^0-9])`, 'i')
+    : null;
+
+  return leases
+    .filter((lease) => {
+      if (!lease || lease.disabled) return false;
+
+      // 1. Exact 12-hex MAC address match if subscriber has ONU MAC configured
+      const leaseMac = normalizeMacHex(lease.macAddress);
+      if (subMac.length === 12 && leaseMac.length === 12 && leaseMac === subMac) {
         return true;
       }
-    }
-    // 2. VLAN IP address match
-    if (vlanPrefix1 && lease.address && lease.address.startsWith(vlanPrefix1)) return true;
-    if (vlanPrefix2 && lease.address && lease.address.startsWith(vlanPrefix2)) return true;
-    if (vlanStr && lease.server && (lease.server.includes(`vlan${vlanStr}`) || lease.server.includes(`vlan-${vlanStr}`))) return true;
-    if (vlanStr && lease.address && lease.address.includes(`.${vlanStr}.`)) return true;
-    if (lease.comment) {
-      if (lease.comment.includes(subIdStr) || lease.comment.includes(idStr)) return true;
-      if (vlanStr && lease.comment.includes(`VLAN ${vlanStr}`)) return true;
-    }
-    if (lease.hostName && lease.hostName.toLowerCase().includes(sub.first.toLowerCase())) return true;
-    return false;
-  });
+
+      // 2. If RouterOS resolved the lease's exact VLAN ID from DHCP server / interface / subnet, enforce it
+      const leaseVlanId =
+        lease.vlanId !== undefined && lease.vlanId !== null && !isNaN(Number(lease.vlanId)) && Number(lease.vlanId) > 0
+          ? Number(lease.vlanId)
+          : null;
+      if (leaseVlanId !== null) {
+        if (subVlan !== null) {
+          return leaseVlanId === subVlan;
+        }
+        return false;
+      }
+
+      // 3. Exact VLAN token match on interface / server / IPv4 3rd octet (never substring .includes('.16.')!)
+      if (subVlan !== null && vlanTokenRegex) {
+        if (lease.interface && vlanTokenRegex.test(lease.interface)) return true;
+        if (lease.server) {
+          const srv = lease.server.trim();
+          if (vlanTokenRegex.test(srv) || srv === String(subVlan)) return true;
+        }
+        if (lease.address && subVlan <= 254) {
+          const cleanIp = lease.address.trim().split('/')[0];
+          const octets = cleanIp.split('.');
+          if (octets.length === 4 && octets[2] === String(subVlan)) {
+            const o0 = octets[0];
+            const o1 = octets[1];
+            if ((o0 === '172' && o1 === '16') || (o0 === '192' && o1 === '168') || (o0 === '10' && o1 === '0')) {
+              return true;
+            }
+          }
+        }
+      }
+
+      // 4. Exact boundary match on RouterOS lease comment (#subId or VLAN #)
+      if (lease.comment) {
+        if (commentIdRegex.test(lease.comment)) return true;
+        if (commentVlanRegex && commentVlanRegex.test(lease.comment)) return true;
+      }
+
+      return false;
+    })
+    .sort((a, b) => {
+      const aBound = a.status === 'bound' ? 0 : 1;
+      const bBound = b.status === 'bound' ? 0 : 1;
+      return aBound - bBound;
+    });
 }
 
 export function formatBytes(bytes?: number): string {
@@ -423,16 +470,9 @@ export function getInterfaceForSubscriber(sub: Subscriber, interfaces: MikroTikI
     if (effectiveVlan !== undefined && Number(effectiveVlan) === subVlan) {
       return true;
     }
-    const nameLower = (iface.name || '').toLowerCase();
-    const commentLower = (iface.comment || '').toLowerCase();
     const sVlanStr = String(subVlan);
-    return (
-      nameLower.includes(`vlan-${sVlanStr}`) ||
-      nameLower.includes(`vlan_${sVlanStr}`) ||
-      nameLower.includes(`vlan${sVlanStr}`) ||
-      commentLower.includes(`vlan ${sVlanStr}`) ||
-      commentLower.includes(`vlan-${sVlanStr}`)
-    );
+    const exactVlanRegex = new RegExp(`(?:^|[^0-9])vlan[-_\\s]*${sVlanStr}(?:$|[^0-9])`, 'i');
+    return exactVlanRegex.test(iface.name || '') || exactVlanRegex.test(iface.comment || '');
   });
 }
 
@@ -440,51 +480,7 @@ export function getDhcpLeasesForSubscriber(
   sub: Subscriber,
   leases: MikroTikDhcpLease[] = []
 ): MikroTikDhcpLease[] {
-  if (!sub || !Array.isArray(leases) || leases.length === 0) return [];
-  const subVlan = sub.vlan !== null && sub.vlan !== undefined && !isNaN(Number(sub.vlan)) && Number(sub.vlan) > 0 ? Number(sub.vlan) : null;
-  const subMac = sub.macAddress ? sub.macAddress.trim().toLowerCase() : null;
-  const subLast = sub.last ? sub.last.trim().toLowerCase() : null;
-  const subIdStr = `#${sub.id}`;
-
-  return leases.filter((lease) => {
-    // Match by MAC
-    if (subMac && lease.macAddress && lease.macAddress.trim().toLowerCase() === subMac) {
-      return true;
-    }
-    // Match by VLAN in server name or IP subnet
-    if (subVlan !== null) {
-      const serverLower = (lease.server || '').toLowerCase();
-      if (
-        serverLower.includes(`vlan${subVlan}`) ||
-        serverLower.includes(`vlan-${subVlan}`) ||
-        serverLower.includes(`vlan_${subVlan}`) ||
-        serverLower === `dhcp${subVlan}` ||
-        serverLower === `dhcp_${subVlan}`
-      ) {
-        return true;
-      }
-      if (
-        lease.address &&
-        (lease.address.startsWith(`192.168.${subVlan}.`) ||
-          lease.address.startsWith(`172.16.${subVlan}.`) ||
-          lease.address.startsWith(`10.0.${subVlan}.`) ||
-          lease.address.includes(`.${subVlan}.`))
-      ) {
-        return true;
-      }
-    }
-    // Match by comment
-    if (lease.comment) {
-      const commentLower = lease.comment.toLowerCase();
-      if (commentLower.includes(subIdStr.toLowerCase()) || commentLower.includes(`sub_${sub.id}`)) {
-        return true;
-      }
-      if (subLast && subLast.length >= 3 && commentLower.includes(subLast)) {
-        return true;
-      }
-    }
-    return false;
-  });
+  return getLeasesForSubscriber(sub, leases);
 }
 
 export interface AvailableVlanOption {
