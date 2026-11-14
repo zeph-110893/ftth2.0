@@ -19,18 +19,43 @@ import {
   AlertCircle,
   Zap,
   Calendar,
+  Radio,
+  Activity,
+  Globe,
+  Trash2,
+  Loader2,
+  User,
 } from 'lucide-react';
-import { MikroTikConfig, MikroTikResource, MikroTikInterface, AuthUser } from '../types';
+import {
+  MikroTikConfig,
+  MikroTikResource,
+  MikroTikInterface,
+  MikroTikIpAddress,
+  MikroTikPingResult,
+  Subscriber,
+  AuthUser,
+} from '../types';
 import { authFetch, canWrite } from '../utils/auth';
+
+interface PingHistoryEntry extends MikroTikPingResult {
+  id: string;
+  timestamp: string;
+  subscriberLabel?: string;
+}
 
 interface MikroTikManagerProps {
   currentUser?: AuthUser | null;
+  subscribers?: Subscriber[];
   onRefreshData?: () => void | Promise<void>;
 }
 
-export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, onRefreshData }) => {
+export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
+  currentUser,
+  subscribers = [],
+  onRefreshData,
+}) => {
   const isReadOnly = !canWrite(currentUser);
-  const [activeTab, setActiveTab] = useState<'resources' | 'settings'>('resources');
+  const [activeTab, setActiveTab] = useState<'resources' | 'diagnostics' | 'settings'>('resources');
   
   const [config, setConfig] = useState<MikroTikConfig>({
     host: '172.16.0.1',
@@ -47,17 +72,29 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
 
   const [resource, setResource] = useState<MikroTikResource | null>(null);
   const [interfaces, setInterfaces] = useState<MikroTikInterface[]>([]);
+  const [routerIpAddresses, setRouterIpAddresses] = useState<MikroTikIpAddress[]>([]);
   
   const [loading, setLoading] = useState(false);
   const [syncingTime, setSyncingTime] = useState(false);
   const [checkingOverdue, setCheckingOverdue] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
+  // IPoE Ping Diagnostic tool state
+  const [diagSubId, setDiagSubId] = useState<string>('');
+  const [diagIp, setDiagIp] = useState<string>('');
+  const [diagMode, setDiagMode] = useState<'icmp' | 'arp-ping'>('icmp');
+  const [diagInterface, setDiagInterface] = useState<string>('');
+  const [diagCount, setDiagCount] = useState<number>(4);
+  const [isPingingDiag, setIsPingingDiag] = useState<boolean>(false);
+  const [diagLatestResult, setDiagLatestResult] = useState<PingHistoryEntry | null>(null);
+  const [diagHistory, setDiagHistory] = useState<PingHistoryEntry[]>([]);
+
   // Load config on mount
   useEffect(() => {
     fetchConfig();
     fetchSystemInfo();
     fetchInterfaces();
+    fetchRouterIpAddresses();
   }, []);
 
   const showNotify = (type: 'success' | 'error' | 'info', message: string) => {
@@ -94,6 +131,138 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
     }
   };
 
+  const fetchRouterIpAddresses = async () => {
+    try {
+      const res = await authFetch('/api/mikrotik/ip-addresses');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.addresses)) {
+        setRouterIpAddresses(data.addresses);
+      }
+    } catch (err) {
+      console.error('Failed to fetch MikroTik IP addresses:', err);
+    }
+  };
+
+  const selectedDiagSubscriber = subscribers.find((s) => String(s.id) === diagSubId) || null;
+
+  // Derive candidate gateway/internal IPs for the selected subscriber without relying on DHCP leases
+  const getSubscriberIpCandidates = (sub: Subscriber | null): Array<{ ip: string; label: string }> => {
+    if (!sub) return [];
+    const candidates: Array<{ ip: string; label: string }> = [];
+    const seen = new Set<string>();
+    const pushCandidate = (ip: string, label: string) => {
+      const clean = ip.trim().split('/')[0];
+      if (clean && !seen.has(clean)) {
+        seen.add(clean);
+        candidates.push({ ip: clean, label });
+      }
+    };
+
+    // 1. Any IPv4 addresses explicitly written in subscriber notes
+    if (sub.notes) {
+      const noteIps = sub.notes.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || [];
+      noteIps.forEach((ip) => pushCandidate(ip, 'From Notes'));
+    }
+
+    // 2. Any RouterOS /ip/address configured on subscriber's VLAN interface
+    if (sub.vlan) {
+      const vlanStr = String(sub.vlan);
+      routerIpAddresses.forEach((addr) => {
+        const ifaceLower = (addr.interface || '').toLowerCase();
+        const commentLower = (addr.comment || '').toLowerCase();
+        if (
+          ifaceLower.includes(`vlan${vlanStr}`) ||
+          ifaceLower.includes(`vlan-${vlanStr}`) ||
+          commentLower.includes(`vlan ${vlanStr}`) ||
+          commentLower.includes(`#${sub.id}`)
+        ) {
+          pushCandidate(addr.address, `RouterOS (${addr.interface})`);
+        }
+      });
+
+      // 3. Common IPoE / VLAN gateway presets
+      pushCandidate(`192.168.${vlanStr}.1`, `VLAN ${vlanStr} Gateway`);
+      pushCandidate(`172.16.${vlanStr}.1`, `VLAN ${vlanStr} IPoE GW`);
+      pushCandidate(`10.0.${vlanStr}.1`, `Internal ${vlanStr} GW`);
+    }
+
+    return candidates;
+  };
+
+  const handleSelectDiagSubscriber = (newSubId: string) => {
+    setDiagSubId(newSubId);
+    if (!newSubId) return;
+    const sub = subscribers.find((s) => String(s.id) === newSubId) || null;
+    if (sub) {
+      const candidates = getSubscriberIpCandidates(sub);
+      if (candidates.length > 0 && !diagIp.trim()) {
+        setDiagIp(candidates[0].ip);
+      } else if (candidates.length > 0) {
+        // Update target IP to top suggestion when switching subscriber
+        setDiagIp(candidates[0].ip);
+      }
+    }
+  };
+
+  const executePingDiagnostic = async (
+    targetAddress: string,
+    overrideMode?: 'icmp' | 'arp-ping',
+    overrideInterface?: string,
+    overrideLabel?: string
+  ) => {
+    const cleanIp = targetAddress.trim().split('/')[0];
+    if (!cleanIp) {
+      showNotify('error', 'Enter a valid IPv4 gateway or internal IP address to ping.');
+      return;
+    }
+
+    const modeToUse = overrideMode || diagMode;
+    const ifaceToUse = overrideInterface !== undefined ? overrideInterface : diagInterface;
+    const subLabel =
+      overrideLabel ||
+      (selectedDiagSubscriber
+        ? `#${selectedDiagSubscriber.id} ${selectedDiagSubscriber.first} ${selectedDiagSubscriber.last}`.trim()
+        : undefined);
+
+    setIsPingingDiag(true);
+    try {
+      const res = await authFetch('/api/mikrotik/ping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: cleanIp,
+          mode: modeToUse,
+          count: diagCount,
+          interface: ifaceToUse || undefined,
+          vlan: selectedDiagSubscriber?.vlan || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showNotify('error', data.error || 'Ping diagnostic failed.');
+        return;
+      }
+
+      const entry: PingHistoryEntry = {
+        ...data.result,
+        id: `ping-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: new Date().toLocaleTimeString(),
+        subscriberLabel: subLabel,
+      };
+      setDiagLatestResult(entry);
+      setDiagHistory((prev) => [entry, ...prev].slice(0, 20));
+    } catch (err: any) {
+      showNotify('error', err?.message || 'Error executing RouterOS ping diagnostic.');
+    } finally {
+      setIsPingingDiag(false);
+    }
+  };
+
+  const handleRunPingSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    executePingDiagnostic(diagIp);
+  };
+
   const handleSyncRouterClock = async () => {
     setSyncingTime(true);
     try {
@@ -117,10 +286,10 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
       const res = await authFetch('/api/mikrotik/check-overdue', { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
-        const disabledCount = (data.processed || []).filter((p: any) => p.action === 'disabled').length;
+        const suspendedCount = (data.processed || []).filter((p: any) => p.action === 'SUSPENDED_UNPAID' || p.action === 'disabled' || p.action === 'DISABLED_VLAN').length;
         showNotify(
           'success',
-          `Overdue Check Completed: Found ${data.overdueSubscribersCount || 0} overdue subscriber(s). ${disabledCount} interface action(s) executed.`
+          `Overdue Check Completed: Found ${data.overdueSubscribersCount || 0} overdue subscriber(s). ${suspendedCount} added to MikroTik address-list 'UNPAID'.`
         );
         if (onRefreshData) {
           await onRefreshData();
@@ -199,6 +368,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
         showNotify('success', 'MikroTik connection settings saved!');
         fetchSystemInfo();
         fetchInterfaces();
+        fetchRouterIpAddresses();
         if (onRefreshData) {
           await onRefreshData();
         }
@@ -268,6 +438,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
               onClick={() => {
                 fetchSystemInfo();
                 fetchInterfaces();
+                fetchRouterIpAddresses();
               }}
               disabled={loading}
               className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs transition-all flex items-center gap-2 cursor-pointer"
@@ -364,6 +535,16 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
         </button>
 
         <button
+          onClick={() => setActiveTab('diagnostics')}
+          className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
+            activeTab === 'diagnostics' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Radio className="w-4 h-4" />
+          <span>IPoE Ping Diagnostics</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('settings')}
           className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
             activeTab === 'settings' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
@@ -422,7 +603,463 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
         </div>
       )}
 
-      {/* Tab 2: Router Connection Settings */}
+      {/* Tab 2: IPoE Gateway & Internal IP Ping Diagnostics */}
+      {activeTab === 'diagnostics' && (
+        <div className="space-y-6">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm space-y-5">
+            <div className="pb-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-indigo-600" />
+                  <span>IPoE Gateway &amp; Internal IP Ping Diagnostic</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Ping a subscriber&apos;s assigned IPoE gateway, ONU WAN IP, or internal IP directly from MikroTik RouterOS without relying on DHCP leases.
+                </p>
+              </div>
+              <span className="self-start sm:self-auto px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200">
+                Lease-Free Probe
+              </span>
+            </div>
+
+            <form onSubmit={handleRunPingSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Subscriber Picker (Optional) */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">
+                    Subscriber (Optional Quick-Fill)
+                  </label>
+                  <div className="relative">
+                    <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <select
+                      value={diagSubId}
+                      onChange={(e) => handleSelectDiagSubscriber(e.target.value)}
+                      className="w-full text-xs pl-9 pr-3 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white font-medium text-slate-800"
+                    >
+                      <option value="">-- Custom / Direct IP Entry (Any Subscriber) --</option>
+                      {[...subscribers]
+                        .sort((a, b) => a.id - b.id)
+                        .map((sub) => (
+                          <option key={sub.id} value={String(sub.id)}>
+                            #{sub.id} {sub.first} {sub.last}
+                            {sub.vlan ? ` (VLAN ${sub.vlan})` : ''}
+                            {sub.status !== 'Active' ? ` [${sub.status}]` : ''}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Target IP Address */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">
+                    Target IPoE Gateway / Internal IP *
+                  </label>
+                  <div className="relative">
+                    <Globe className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      required
+                      value={diagIp}
+                      onChange={(e) => setDiagIp(e.target.value)}
+                      placeholder="e.g. 100.64.10.1, 192.168.105.1, or 10.0.105.2"
+                      className="w-full text-xs pl-9 pr-3 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-slate-900"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick-fill IP suggestions for selected subscriber */}
+              {selectedDiagSubscriber && (
+                <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between text-[11px] text-slate-600">
+                    <span className="font-semibold">
+                      Suggested IPs for <strong className="text-slate-900">#{selectedDiagSubscriber.id} {selectedDiagSubscriber.first} {selectedDiagSubscriber.last}</strong>:
+                    </span>
+                    {selectedDiagSubscriber.macAddress && (
+                      <span className="font-mono text-[10px] text-slate-400">ONU MAC: {selectedDiagSubscriber.macAddress}</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {getSubscriberIpCandidates(selectedDiagSubscriber).length > 0 ? (
+                      getSubscriberIpCandidates(selectedDiagSubscriber).map((cand) => (
+                        <button
+                          key={cand.ip}
+                          type="button"
+                          onClick={() => setDiagIp(cand.ip)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-mono border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                            diagIp.trim() === cand.ip
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                              : 'bg-white text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40'
+                          }`}
+                        >
+                          <span className="font-bold">{cand.ip}</span>
+                          <span className={`text-[10px] font-sans ${diagIp.trim() === cand.ip ? 'text-indigo-100' : 'text-slate-400'}`}>
+                            {cand.label}
+                          </span>
+                        </button>
+                      ))
+                    ) : (
+                      <span className="text-[11px] text-slate-400">
+                        No VLAN or note IP set for this subscriber — enter their IPoE gateway or internal IP manually above.
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Probe Options Row */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Ping Mode */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">
+                    Probe Method
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-lg border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setDiagMode('icmp')}
+                      className={`py-1.5 px-2 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                        diagMode === 'icmp'
+                          ? 'bg-white text-indigo-700 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      ICMP (Layer 3)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDiagMode('arp-ping')}
+                      className={`py-1.5 px-2 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                        diagMode === 'arp-ping'
+                          ? 'bg-white text-indigo-700 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      ARP-Ping (L2)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Outgoing Interface (Optional) */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">
+                    Router Interface (Optional)
+                  </label>
+                  <select
+                    value={diagInterface}
+                    onChange={(e) => setDiagInterface(e.target.value)}
+                    className="w-full text-xs p-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white font-mono"
+                  >
+                    <option value="">Auto (RouterOS Routing Table)</option>
+                    {Array.from(
+                      new Set([
+                        ...interfaces.map((i) => i.name).filter(Boolean),
+                        ...routerIpAddresses.map((a) => a.interface).filter(Boolean),
+                      ])
+                    ).map((ifaceName) => (
+                      <option key={ifaceName} value={ifaceName}>
+                        {ifaceName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Packet Count */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">
+                    Ping Count
+                  </label>
+                  <select
+                    value={diagCount}
+                    onChange={(e) => setDiagCount(Number(e.target.value) || 4)}
+                    className="w-full text-xs p-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white font-semibold"
+                  >
+                    <option value={3}>3 Packets (Fast)</option>
+                    <option value={4}>4 Packets (Standard)</option>
+                    <option value={5}>5 Packets</option>
+                    <option value={10}>10 Packets (Stability Check)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <p className="text-[11px] text-slate-500">
+                  {diagMode === 'icmp'
+                    ? 'ICMP (Layer 3) tests IP reachability across routed IPoE gateways and internal subnets without requiring DHCP leases.'
+                    : 'ARP-Ping (Layer 2) verifies direct MAC-level reachability on the selected local router interface.'}
+                </p>
+                <button
+                  type="submit"
+                  disabled={isPingingDiag || !diagIp.trim()}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                >
+                  {isPingingDiag ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Pinging {diagIp.trim().split('/')[0]}...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Activity className="w-4 h-4" />
+                      <span>Run Ping Test</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+
+            {/* Latest Ping Result Card */}
+            {diagLatestResult && (
+              <div
+                className={`p-4 rounded-xl border space-y-3 ${
+                  diagLatestResult.alive
+                    ? 'bg-emerald-50/70 border-emerald-200'
+                    : 'bg-rose-50/70 border-rose-200'
+                }`}
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
+                        diagLatestResult.alive
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-rose-600 text-white'
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                      {diagLatestResult.alive ? 'Reachable / Online' : 'Unreachable / Timed Out'}
+                    </span>
+                    <span className="font-mono font-black text-sm text-slate-900">
+                      {diagLatestResult.address}
+                    </span>
+                    {diagLatestResult.subscriberLabel && (
+                      <span className="text-xs font-semibold text-slate-600 bg-white/80 px-2 py-0.5 rounded-md border border-slate-200">
+                        {diagLatestResult.subscriberLabel}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[11px] font-mono text-slate-500">
+                    {diagLatestResult.timestamp}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                  <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/80">
+                    <div className="text-[10px] uppercase font-bold text-slate-400">Method</div>
+                    <div className="font-mono font-bold text-slate-800 mt-0.5">
+                      {diagLatestResult.method === 'icmp' ? 'ICMP (L3)' : diagLatestResult.method?.toUpperCase() || 'ICMP'}
+                    </div>
+                  </div>
+                  <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/80">
+                    <div className="text-[10px] uppercase font-bold text-slate-400">Avg Latency</div>
+                    <div className="font-mono font-bold text-slate-800 mt-0.5">
+                      {diagLatestResult.avgRtt || diagLatestResult.time || '—'}
+                    </div>
+                  </div>
+                  <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/80">
+                    <div className="text-[10px] uppercase font-bold text-slate-400">Packet Loss</div>
+                    <div
+                      className={`font-mono font-bold mt-0.5 ${
+                        (diagLatestResult.packetLoss ?? 0) === 0 ? 'text-emerald-700' : 'text-rose-700'
+                      }`}
+                    >
+                      {diagLatestResult.packetLoss ?? (diagLatestResult.alive ? 0 : 100)}%
+                      {diagLatestResult.sent ? ` (${diagLatestResult.received ?? 0}/${diagLatestResult.sent})` : ''}
+                    </div>
+                  </div>
+                  <div className="bg-white/80 p-2.5 rounded-lg border border-slate-200/80">
+                    <div className="text-[10px] uppercase font-bold text-slate-400">Interface</div>
+                    <div className="font-mono font-bold text-slate-800 mt-0.5 truncate">
+                      {diagLatestResult.interface || 'routing-table'}
+                    </div>
+                  </div>
+                </div>
+
+                {diagLatestResult.message && (
+                  <p className="text-xs font-medium text-slate-700">
+                    {diagLatestResult.message}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* RouterOS Configured Gateways Quick-Pick */}
+            {routerIpAddresses.length > 0 && (
+              <div className="pt-3 border-t border-slate-100 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    RouterOS Configured Interface Gateways (/ip/address)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={fetchRouterIpAddresses}
+                    className="text-[11px] text-indigo-600 hover:text-indigo-700 font-semibold cursor-pointer inline-flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Refresh</span>
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {routerIpAddresses.slice(0, 12).map((item, idx) => {
+                    const cleanGw = item.address.split('/')[0];
+                    return (
+                      <button
+                        key={item.id || `${cleanGw}-${idx}`}
+                        type="button"
+                        onClick={() => {
+                          setDiagIp(cleanGw);
+                          executePingDiagnostic(cleanGw, diagMode, '', `Gateway (${item.interface})`);
+                        }}
+                        disabled={isPingingDiag}
+                        className="px-2.5 py-1 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-lg text-[11px] font-mono text-slate-700 transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                        title={`Ping ${cleanGw} on ${item.interface}`}
+                      >
+                        <Zap className="w-3 h-3 text-indigo-500" />
+                        <span className="font-bold">{cleanGw}</span>
+                        <span className="text-[10px] font-sans text-slate-400">{item.interface}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Diagnostic History */}
+          {diagHistory.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+              <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between gap-2 bg-slate-50/50">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-indigo-600" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                    Recent Ping Diagnostics ({diagHistory.length})
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDiagHistory([]);
+                    setDiagLatestResult(null);
+                  }}
+                  className="text-xs font-semibold text-slate-500 hover:text-rose-600 inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear</span>
+                </button>
+              </div>
+
+              {/* Mobile cards */}
+              <div className="block sm:hidden divide-y divide-slate-100">
+                {diagHistory.map((item) => (
+                  <div key={item.id} className="p-4 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-mono font-bold text-xs text-slate-900">{item.address}</div>
+                        {item.subscriberLabel && (
+                          <div className="text-[11px] text-slate-500 truncate">{item.subscriberLabel}</div>
+                        )}
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          item.alive
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-rose-100 text-rose-700'
+                        }`}
+                      >
+                        {item.alive ? 'Online' : 'Timed Out'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
+                      <span>
+                        {item.method?.toUpperCase()} &bull; {item.avgRtt || '—'} &bull; {item.packetLoss ?? 0}% loss
+                      </span>
+                      <button
+                        type="button"
+                        disabled={isPingingDiag}
+                        onClick={() => {
+                          setDiagIp(item.address);
+                          executePingDiagnostic(
+                            item.address,
+                            item.method === 'arp-ping' ? 'arp-ping' : 'icmp',
+                            item.interface === 'routing-table' ? '' : item.interface,
+                            item.subscriberLabel
+                          );
+                        }}
+                        className="text-indigo-600 font-sans font-bold cursor-pointer disabled:opacity-40"
+                      >
+                        Re-Ping
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop table */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50/80 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-200">
+                      <th className="py-2.5 px-4">Time</th>
+                      <th className="py-2.5 px-4">Target IP</th>
+                      <th className="py-2.5 px-4">Subscriber</th>
+                      <th className="py-2.5 px-4">Method</th>
+                      <th className="py-2.5 px-4">Latency</th>
+                      <th className="py-2.5 px-4">Loss</th>
+                      <th className="py-2.5 px-4">Status</th>
+                      <th className="py-2.5 px-4 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {diagHistory.map((item) => (
+                      <tr key={item.id} className="hover:bg-slate-50/80">
+                        <td className="py-2.5 px-4 font-mono text-slate-500 whitespace-nowrap">{item.timestamp}</td>
+                        <td className="py-2.5 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">{item.address}</td>
+                        <td className="py-2.5 px-4 text-slate-600">{item.subscriberLabel || '—'}</td>
+                        <td className="py-2.5 px-4 font-mono text-slate-600 uppercase">{item.method || 'icmp'}</td>
+                        <td className="py-2.5 px-4 font-mono font-semibold text-slate-800">{item.avgRtt || item.time || '—'}</td>
+                        <td className="py-2.5 px-4 font-mono text-slate-600">{item.packetLoss ?? (item.alive ? 0 : 100)}%</td>
+                        <td className="py-2.5 px-4 whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              item.alive
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-rose-50 text-rose-700 border border-rose-200'
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${item.alive ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                            {item.alive ? 'Online' : 'Timed Out'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-4 text-right whitespace-nowrap">
+                          <button
+                            type="button"
+                            disabled={isPingingDiag}
+                            onClick={() => {
+                              setDiagIp(item.address);
+                              executePingDiagnostic(
+                                item.address,
+                                item.method === 'arp-ping' ? 'arp-ping' : 'icmp',
+                                item.interface === 'routing-table' ? '' : item.interface,
+                                item.subscriberLabel
+                              );
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 font-semibold text-[11px] transition-colors cursor-pointer disabled:opacity-40"
+                          >
+                            Re-Ping
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab 3: Router Connection Settings */}
       {activeTab === 'settings' && (
         <form onSubmit={handleSaveConfig} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
           <div className="pb-4 border-b border-slate-100">
@@ -681,7 +1318,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Automatically checks subscriber dues and disables VLAN interfaces / PPP secrets on MikroTik when billing due dates expire.
+                    Automatically checks subscriber dues and adds overdue subscribers to the MikroTik firewall address list UNPAID when billing due dates expire.
                   </p>
                 </div>
 
@@ -782,14 +1419,14 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({ currentUser, o
                       className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                     >
                       <Play className={`w-3 h-3 ${checkingOverdue ? 'animate-spin' : ''}`} />
-                      <span>{checkingOverdue ? 'Executing Check...' : 'Run Disconnection Check Now'}</span>
+                      <span>{checkingOverdue ? 'Executing Check...' : 'Run Overdue Check Now'}</span>
                     </button>
                   </div>
 
                   <div className="flex items-start gap-1.5 text-[10px] text-slate-500">
                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
                     <span>
-                      <strong>Safe Exclusions:</strong> Only active subscribers with an expired billing due date and unpaid balance will have their router interface disabled. Inactive accounts and paused subscriptions remain unaffected.
+                      <strong>Safe Exclusions:</strong> Only active subscribers with an expired billing due date and unpaid balance will be added to the UNPAID address list. Inactive accounts and paused subscriptions remain unaffected.
                     </span>
                   </div>
                 </div>

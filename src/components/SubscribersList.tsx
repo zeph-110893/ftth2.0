@@ -107,8 +107,8 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
         setActionNotification({
           type: 'success',
           message: count > 0 
-            ? `Successfully disabled VLAN interfaces for ${count} overdue subscriber${count > 1 ? 's' : ''} on MikroTik RouterOS.`
-            : 'No overdue subscribers with active VLAN interfaces needed disabling.',
+            ? `Successfully suspended ${count} overdue subscriber${count > 1 ? 's' : ''} on MikroTik RouterOS (added to address-list UNPAID).`
+            : 'No overdue subscribers needed suspension.',
           details: data.processed || [],
         });
         if (onRefreshData) {
@@ -118,7 +118,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
       } else {
         setActionNotification({
           type: 'error',
-          message: data.error || 'Failed to disable overdue VLANs on MikroTik RouterOS.',
+          message: data.error || 'Failed to suspend overdue subscribers on MikroTik RouterOS.',
         });
       }
     } catch (err: any) {
@@ -406,10 +406,10 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
               onClick={() => setIsConfirmModalOpen(true)}
               disabled={isDisablingOverdue}
               className="col-span-2 sm:col-span-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200/90 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto min-h-[34px]"
-              title="Disable all overdue subscriber VLAN interfaces in MikroTik RouterOS"
+              title="Suspend all overdue subscribers by adding their IP to MikroTik address-list UNPAID"
             >
               <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-              <span>Disable Overdue VLANs</span>
+              <span>Suspend Overdue (UNPAID)</span>
               {overdueVlanSubs.length > 0 && (
                 <span className="ml-0.5 px-1.5 py-0.2 bg-rose-600 text-white text-[10px] font-bold rounded-full">
                   {overdueVlanSubs.length}
@@ -1216,10 +1216,10 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900 leading-tight">
-                    Disable All Overdue VLANs
+                    Suspend All Overdue Subscribers
                   </h3>
                   <p className="text-xs text-rose-700 mt-0.5">
-                    RouterOS Automated VLAN Isolation
+                    MikroTik Firewall Address-List: UNPAID
                   </p>
                 </div>
               </div>
@@ -1240,7 +1240,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                 <div>
                   <p className="font-semibold">Confirm RouterOS Action</p>
                   <p className="text-amber-800 text-[11px] mt-0.5">
-                    This action will connect to the MikroTik router and automatically disable the VLAN interface for all active subscribers who have overdue unpaid balances (inactive subscribers are excluded).
+                    This action connects to the MikroTik router and automatically adds the IP addresses of all active overdue subscribers to the firewall address-list <strong>UNPAID</strong>. Their VLAN interfaces will remain online so their routers stay connected and can receive payment reminder pages.
                   </p>
                 </div>
               </div>
@@ -1307,12 +1307,12 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                 {isDisablingOverdue ? (
                   <>
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Disabling VLANs on RouterOS...</span>
+                    <span>Suspending via UNPAID List...</span>
                   </>
                 ) : (
                   <>
                     <Ban className="w-3.5 h-3.5" />
-                    <span>Confirm & Disable All ({overdueVlanSubs.length})</span>
+                    <span>Confirm & Suspend All ({overdueVlanSubs.length})</span>
                   </>
                 )}
               </button>

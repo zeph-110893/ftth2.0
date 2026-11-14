@@ -17,10 +17,20 @@ import {
   Lock,
   ArrowDownCircle,
   ArrowUpCircle,
+  Search,
+  UserCheck,
+  LogOut,
   HelpCircle,
-  UserPlus,
 } from 'lucide-react';
 import { SubscriberPortalData } from '../types';
+
+const PORTAL_STORAGE_KEY = 'ipoe_portal_sub_id';
+
+interface LookupParams {
+  subId?: string;
+  vlan?: string;
+  query?: string;
+}
 
 interface SubscriberPortalProps {
   onOpenAdminLogin?: () => void;
@@ -32,7 +42,10 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
   const [data, setData] = useState<SubscriberPortalData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [isSearching, setIsSearching] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [searchInput, setSearchInput] = useState<string>('');
+  const [activeLookup, setActiveLookup] = useState<LookupParams | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
   const [rateLimitNotice, setRateLimitNotice] = useState<string | null>(null);
@@ -46,14 +59,22 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
     return () => clearTimeout(timer);
   }, [cooldownRemaining]);
 
-  // Fetch subscriber portal info strictly via automatic IP detection (3rd octet VLAN)
-  const fetchPortalData = useCallback(async (silent = false) => {
+  // Fetch subscriber portal info via IPoE account lookup
+  const fetchPortalData = useCallback(async (lookup: LookupParams | null, silent = false) => {
     try {
       if (!silent) setIsLoading(true);
       else setIsRefreshing(true);
       setError(null);
 
-      const res = await fetch('/api/portal/subscriber-info', {
+      const params = new URLSearchParams();
+      if (lookup?.subId) params.set('subId', lookup.subId);
+      else if (lookup?.vlan) params.set('vlan', lookup.vlan);
+      else if (lookup?.query) params.set('query', lookup.query);
+
+      const qs = params.toString();
+      const url = qs ? `/api/portal/subscriber-info?${qs}` : '/api/portal/subscriber-info';
+
+      const res = await fetch(url, {
         headers: {
           Accept: 'application/json',
         },
@@ -71,13 +92,30 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
         throw new Error(`Server returned status ${res.status}`);
       }
 
-      const json = await res.json();
+      const json: SubscriberPortalData = await res.json();
       if (json && json.success) {
         setData(json);
         setRateLimitNotice(null);
         setLastRefreshed(new Date());
+
+        if (json.matched && json.subscriber?.id) {
+          const subIdStr = String(json.subscriber.id);
+          setActiveLookup({ subId: subIdStr });
+          try {
+            localStorage.setItem(PORTAL_STORAGE_KEY, subIdStr);
+          } catch {
+            // ignore storage errors
+          }
+        } else if (json.notFound && lookup?.subId && !lookup?.query && !lookup?.vlan) {
+          // Saved ID no longer exists; clear stored ID
+          try {
+            localStorage.removeItem(PORTAL_STORAGE_KEY);
+          } catch {
+            // ignore
+          }
+        }
       } else {
-        setError(json?.error || 'No subscriber data found.');
+        setError((json as any)?.error || 'No subscriber data found.');
       }
     } catch (err: any) {
       console.warn('Portal data fetch notice:', err?.message || err);
@@ -85,28 +123,88 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
+      setIsSearching(false);
     }
   }, []);
 
+  // Initial load: check URL query params (?subId=, ?id=, ?vlan=, ?query=, ?q=) or saved subscriber ID
   useEffect(() => {
-    fetchPortalData();
+    let initialLookup: LookupParams | null = null;
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const subId = urlParams.get('subId') || urlParams.get('id');
+      const vlan = urlParams.get('vlan');
+      const query = urlParams.get('query') || urlParams.get('q');
+
+      if (subId && subId.trim()) {
+        initialLookup = { subId: subId.trim() };
+      } else if (vlan && vlan.trim()) {
+        initialLookup = { vlan: vlan.trim() };
+      } else if (query && query.trim()) {
+        initialLookup = { query: query.trim() };
+        setSearchInput(query.trim());
+      } else {
+        const savedId = localStorage.getItem(PORTAL_STORAGE_KEY);
+        if (savedId && savedId.trim()) {
+          initialLookup = { subId: savedId.trim() };
+        }
+      }
+    } catch {
+      initialLookup = null;
+    }
+
+    setActiveLookup(initialLookup);
+    fetchPortalData(initialLookup);
   }, [fetchPortalData]);
 
   // Periodic bandwidth telemetry refresh (every 30 seconds) ONLY when page is active/visible and subscriber is matched
   useEffect(() => {
-    if (!data?.subscriber) return;
+    if (!data?.subscriber?.id) return;
+    const subId = String(data.subscriber.id);
     const timer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        fetchPortalData(true);
+        fetchPortalData({ subId }, true);
       }
     }, 30000);
     return () => clearInterval(timer);
-  }, [Boolean(data?.subscriber), fetchPortalData]);
+  }, [data?.subscriber?.id, fetchPortalData]);
 
   const handleManualRefresh = () => {
     if (cooldownRemaining > 0 || isRefreshing) return;
     setCooldownRemaining(3); // 3-second anti-spam client cooldown
-    fetchPortalData(true);
+    fetchPortalData(activeLookup, true);
+  };
+
+  const handleLookupSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = searchInput.trim();
+    if (!trimmed) return;
+    setIsSearching(true);
+    const lookup: LookupParams = { query: trimmed };
+    setActiveLookup(lookup);
+    fetchPortalData(lookup, true);
+  };
+
+  const handleSelectSubscriber = (id: number) => {
+    const lookup: LookupParams = { subId: String(id) };
+    setIsSearching(true);
+    setActiveLookup(lookup);
+    fetchPortalData(lookup, true);
+  };
+
+  const handleSwitchAccount = () => {
+    try {
+      localStorage.removeItem(PORTAL_STORAGE_KEY);
+      if (window.location.search) {
+        const cleanUrl = `${window.location.pathname}${window.location.hash || ''}`;
+        window.history.replaceState({}, '', cleanUrl);
+      }
+    } catch {
+      // ignore
+    }
+    setSearchInput('');
+    setActiveLookup(null);
+    fetchPortalData(null, true);
   };
 
   // Helper to pick device icon based on device name
@@ -173,10 +271,10 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
               <Wifi className="w-5 h-5 text-slate-950 font-bold" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-base font-black tracking-tight text-white">FTTH Fiber Subscriber Portal</h1>
                 <span className="text-[10px] uppercase font-bold tracking-widest px-2 py-0.5 bg-cyan-500/20 text-cyan-400 rounded-md border border-cyan-500/30">
-                  Self-Service
+                  IPoE Self-Service
                 </span>
               </div>
               <p className="text-xs text-slate-400">Live Connection Telemetry & Billing Dashboard</p>
@@ -184,13 +282,16 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap justify-end">
-            {/* Detected IP Display */}
-            {data?.detectedIp && (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800/90 rounded-lg border border-slate-700 text-xs text-slate-300 font-mono shadow-xs">
-                <Globe className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                <span className="text-[11px] text-slate-400">Client IP:</span>
-                <span className="text-cyan-300 font-bold">{data.detectedIp}</span>
-              </div>
+            {/* Switch Account Button when viewing a subscriber */}
+            {data?.subscriber && (
+              <button
+                onClick={handleSwitchAccount}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors cursor-pointer"
+                title="Look up a different subscriber account"
+              >
+                <LogOut className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="text-[11px]">Switch Account</span>
+              </button>
             )}
 
             {/* Refresh Button with Anti-Spam Cooldown */}
@@ -238,17 +339,25 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
           </div>
         )}
 
+        {/* Network / API Error Banner */}
+        {error && (
+          <div className="flex items-center gap-2.5 p-3.5 bg-rose-500/10 border border-rose-500/30 text-rose-800 rounded-xl text-xs font-medium shadow-sm">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <div className="flex-1">{error}</div>
+          </div>
+        )}
+
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center py-28 text-slate-500 gap-3">
+          <div className="flex flex-col items-center justify-center py-28 text-slate-500 gap-3 text-center px-4">
             <div className="w-10 h-10 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin" />
             <span className="text-sm font-semibold text-slate-600 font-mono">
-              Auto-detecting subscriber VLAN by IP & querying router...
+              Loading IPoE subscriber portal...
             </span>
-            <p className="text-xs text-slate-400">Strict IP Auto-Detection — no manual selection required</p>
+            <p className="text-xs text-slate-400">Connecting to billing &amp; router service</p>
           </div>
         ) : !data || !data.subscriber ? (
           data?.noSubscribers ? (
-            <div className="bg-white rounded-2xl p-10 border border-slate-200 text-center space-y-4 max-w-lg mx-auto shadow-sm my-8">
+            <div className="bg-white rounded-2xl p-8 sm:p-10 border border-slate-200 text-center space-y-4 max-w-lg mx-auto shadow-sm my-8">
               <div className="w-14 h-14 rounded-2xl bg-cyan-50 text-cyan-600 flex items-center justify-center mx-auto border border-cyan-100">
                 <Wifi className="w-7 h-7" />
               </div>
@@ -258,7 +367,7 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
                   The database has no active subscriber records registered yet.
                 </p>
                 <p className="text-xs text-slate-400 mt-1">
-                  Log in to the Admin Panel to register subscribers, assign VLANs, and record payments.
+                  Log in to the Admin Panel to register subscribers, configure IPoE/VLAN settings, and record payments.
                 </p>
               </div>
               {onOpenAdminLogin && (
@@ -274,44 +383,116 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
               )}
             </div>
           ) : (
-            <div className="bg-white rounded-2xl p-8 sm:p-10 border border-slate-200/90 text-center space-y-5 max-w-lg mx-auto shadow-sm my-8">
-              <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200/60 shadow-xs">
-                <Globe className="w-8 h-8 text-amber-600" />
-              </div>
-              <div>
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-800 rounded-full text-xs font-semibold mb-3">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Unrecognized Network Connection</span>
+            <div className="bg-white rounded-2xl p-6 sm:p-10 border border-slate-200/90 space-y-6 max-w-xl mx-auto shadow-sm my-6 sm:my-10">
+              <div className="text-center space-y-3">
+                <div className="w-14 h-14 rounded-2xl bg-cyan-50 text-cyan-600 flex items-center justify-center mx-auto border border-cyan-100 shadow-xs">
+                  <Search className="w-7 h-7" />
                 </div>
-                <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
-                  Subscriber Not Found for Current IP
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-cyan-50 text-cyan-700 border border-cyan-200/70 rounded-full text-[11px] font-semibold">
+                  <Wifi className="w-3.5 h-3.5 text-cyan-600" />
+                  <span>IPoE Subscriber Account Lookup</span>
+                </div>
+                <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                  View Your Fiber Account
                 </h3>
-                <div className="mt-3 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs font-mono text-slate-700">
-                  Detected IP: <strong className="text-cyan-700">{data?.detectedIp || 'Unknown'}</strong>
-                </div>
-                <p className="text-xs text-slate-500 mt-3 leading-relaxed">
-                  The Subscriber Portal strictly auto-detects your account based on your device's connection IP address. No subscriber VLAN matches this address.
-                </p>
-                <p className="text-xs text-slate-400 mt-2">
-                  Please connect directly to your home FTTH fiber WiFi router / assigned VLAN, or contact your ISP administrator to verify your IP assignment.
+                <p className="text-xs sm:text-sm text-slate-500 leading-relaxed max-w-md mx-auto">
+                  Enter your <strong>Account ID</strong>, <strong>Registered Name</strong>, <strong>Phone Number</strong>, or <strong>VLAN #</strong> to view your billing status, bandwidth usage, and connected devices.
                 </p>
               </div>
 
-              <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
-                <button
-                  onClick={handleManualRefresh}
-                  disabled={isRefreshing || cooldownRemaining > 0}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl transition-all shadow-sm cursor-pointer disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  <span>Re-Detect IP Connection</span>
-                </button>
+              <form onSubmit={handleLookupSubmit} className="space-y-3">
+                <div className="flex flex-col sm:flex-row gap-2.5">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={searchInput}
+                      onChange={(e) => setSearchInput(e.target.value)}
+                      placeholder="e.g. #12, Juan Dela Cruz, 0917..., or VLAN 105"
+                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 focus:bg-white focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 outline-none transition-all"
+                      autoFocus
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!searchInput.trim() || isSearching}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 bg-cyan-600 hover:bg-cyan-500 text-white text-xs sm:text-sm font-bold rounded-xl transition-all shadow-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                  >
+                    {isSearching ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <UserCheck className="w-4 h-4" />
+                    )}
+                    <span>{isSearching ? 'Searching...' : 'View Account'}</span>
+                  </button>
+                </div>
+              </form>
+
+              {/* Not found feedback */}
+              {data?.notFound && (
+                <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold">No matching subscriber found{data.searchQuery ? ` for "${data.searchQuery}"` : ''}.</p>
+                    <p className="text-amber-700 mt-0.5">
+                      Check your Account ID, enter at least 2 characters of your registered name, or verify your phone/VLAN number with your ISP administrator.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Multiple matches selection */}
+              {data?.multipleMatches && data.multipleMatches.length > 0 && (
+                <div className="space-y-2.5 pt-1">
+                  <div className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                    <span>Multiple accounts matched — select your account:</span>
+                    <span className="text-[11px] font-normal text-slate-400">{data.multipleMatches.length} found</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {data.multipleMatches.map((match) => (
+                      <button
+                        key={match.id}
+                        type="button"
+                        onClick={() => handleSelectSubscriber(match.id)}
+                        className="p-3.5 rounded-xl border border-slate-200 hover:border-cyan-400 bg-slate-50/70 hover:bg-cyan-50/40 text-left transition-all flex items-center justify-between gap-2 cursor-pointer group"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-slate-900 group-hover:text-cyan-700 truncate">
+                            {match.name}
+                          </div>
+                          <div className="text-[11px] text-slate-500 font-mono mt-0.5 flex items-center gap-2">
+                            <span>ID #{match.id}</span>
+                            {match.vlan ? <span>&bull; VLAN #{match.vlan}</span> : null}
+                          </div>
+                        </div>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
+                            match.status === 'Active'
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-slate-200 text-slate-600'
+                          }`}
+                        >
+                          {match.status}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-slate-400">
+                <div className="flex items-center gap-1.5 font-mono text-slate-500">
+                  <Globe className="w-3.5 h-3.5 text-cyan-600 shrink-0" />
+                  <span>Request IP:</span>
+                  <strong className="text-slate-800">{data?.requestIp || 'Detecting...'}</strong>
+                </div>
                 {onOpenAdminLogin && (
                   <button
+                    type="button"
                     onClick={onOpenAdminLogin}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors cursor-pointer border border-slate-200"
+                    className="inline-flex items-center gap-1 text-slate-600 hover:text-cyan-700 font-semibold cursor-pointer"
                   >
-                    <Lock className="w-3.5 h-3.5 text-slate-500" />
+                    <Lock className="w-3 h-3" />
                     <span>Admin Login</span>
                   </button>
                 )}
@@ -320,25 +501,36 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
           )
         ) : (
           <>
-            {/* Detection Info Bar */}
-            <div className="bg-white rounded-xl p-3.5 border border-slate-200/80 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+            {/* Subscriber Session Info Bar */}
+            <div className="bg-white rounded-xl p-3.5 border border-slate-200/80 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs">
               <div className="flex items-center gap-2 text-slate-600 flex-wrap">
                 <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
                 <span>
-                  Connected as <strong className="text-slate-900">{data.subscriber.name}</strong> (Subscriber #{data.subscriber.id})
+                  Viewing Account: <strong className="text-slate-900">{data.subscriber.name}</strong> (Subscriber #{data.subscriber.id})
                 </span>
                 <span className="px-2 py-0.5 bg-cyan-50 text-cyan-700 font-mono font-bold rounded text-[11px] border border-cyan-200/60">
-                  VLAN #{data.detectedVlan || data.subscriber.vlan || '100'}
+                  IPoE {data.detectedVlan || data.subscriber.vlan ? `• VLAN #${data.detectedVlan || data.subscriber.vlan}` : ''}
                 </span>
-                <span className="text-[11px] text-slate-400 font-mono">
-                  (Auto-Detected from IP {data.detectedIp})
-                </span>
+                {data.matchedBy === 'wan_ip_lease' && (
+                  <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 font-medium rounded text-[11px] border border-emerald-200/60">
+                    Matched via ONU WAN IP
+                  </span>
+                )}
               </div>
-              <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                <span>
-                  Last synced: <strong className="text-slate-600">{lastRefreshed.toLocaleTimeString()}</strong>
-                </span>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <div className="flex items-center gap-3 text-[11px] text-slate-400 w-full sm:w-auto justify-between sm:justify-end">
+                <div className="flex items-center gap-2">
+                  <span>
+                    Last synced: <strong className="text-slate-600">{lastRefreshed.toLocaleTimeString()}</strong>
+                  </span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSwitchAccount}
+                  className="text-cyan-600 hover:text-cyan-700 font-semibold underline underline-offset-2 cursor-pointer sm:hidden"
+                >
+                  Switch
+                </button>
               </div>
             </div>
 
@@ -440,6 +632,18 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
                       <span className="font-mono font-bold text-cyan-600">VLAN-{data.detectedVlan || data.subscriber.vlan || '100'}</span>
                     </div>
                     <div className="py-2.5 flex justify-between">
+                      <span className="text-slate-500">ONU WAN IP (IPoE)</span>
+                      <span className="font-mono font-bold text-slate-900">
+                        {data.onuWanIp || <span className="text-slate-400 font-normal">Not in live DHCP</span>}
+                      </span>
+                    </div>
+                    {data.requestIp && (
+                      <div className="py-2.5 flex justify-between">
+                        <span className="text-slate-500">Request / Public IP</span>
+                        <span className="font-mono font-medium text-slate-700">{data.requestIp}</span>
+                      </div>
+                    )}
+                    <div className="py-2.5 flex justify-between">
                       <span className="text-slate-500">Service Status</span>
                       <span className={`font-bold ${data.subscriber.status === 'Active' ? 'text-emerald-600' : 'text-rose-600'}`}>
                         {data.subscriber.status}
@@ -537,7 +741,7 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
                   <div>
                     <h2 className="text-base font-bold text-slate-900">Connected Home Devices (DHCP List)</h2>
                     <p className="text-xs text-slate-500">
-                      Devices currently assigned a local IP on your home VLAN network
+                      Devices currently active under your IPoE / DHCP subscriber session
                     </p>
                   </div>
                 </div>
@@ -548,7 +752,7 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
 
               {!data.devices || data.devices.length === 0 ? (
                 <div className="py-8 text-center text-slate-400 text-xs">
-                  No active DHCP leases currently reported for your home VLAN.
+                  No active DHCP leases currently reported for this subscriber account.
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
@@ -629,7 +833,7 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
       <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-500 mt-auto">
         <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>&copy; {new Date().getFullYear()} FTTH High-Speed Fiber Network. All rights reserved.</span>
-          <span className="text-[11px] text-slate-400">Subscriber Self-Service Portal &bull; Zero Authentication Required</span>
+          <span className="text-[11px] text-slate-400">IPoE Subscriber Self-Service Portal</span>
         </div>
       </footer>
     </div>

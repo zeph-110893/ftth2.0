@@ -586,6 +586,7 @@ export default function App() {
             {currentTab === 'mikrotik' && isAdmin(currentUser) && (
               <MikroTikManager
                 currentUser={currentUser}
+                subscribers={subscribers}
                 onRefreshData={fetchData}
               />
             )}

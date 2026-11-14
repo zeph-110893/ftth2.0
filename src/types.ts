@@ -112,6 +112,15 @@ export interface MikroTikDhcpLease {
   comment?: string;
 }
 
+export interface MikroTikAddressListEntry {
+  id?: string;
+  list: string;
+  address: string;
+  comment?: string;
+  disabled?: boolean;
+  dynamic?: boolean;
+}
+
 export interface MikroTikInterface {
   id?: string;
   name: string;
@@ -126,6 +135,31 @@ export interface MikroTikInterface {
   txByte?: number;
   rxPacket?: number;
   txPacket?: number;
+}
+
+export interface MikroTikIpAddress {
+  id?: string;
+  address: string;
+  network?: string;
+  interface: string;
+  comment?: string;
+  disabled?: boolean;
+}
+
+export interface MikroTikPingResult {
+  address: string;
+  alive: boolean;
+  time?: string;
+  avgRtt?: string;
+  minRtt?: string;
+  maxRtt?: string;
+  sent?: number;
+  received?: number;
+  packetLoss?: number;
+  message?: string;
+  method?: 'arp-ping' | 'arp-cache' | 'icmp';
+  macAddress?: string;
+  interface?: string;
 }
 
 export type UserPermission = 'ADMIN' | 'OPERATOR';
@@ -189,13 +223,25 @@ export interface SubscriberPortalBandwidth {
   running: boolean;
 }
 
+export interface SubscriberPortalLookupMatch {
+  id: number;
+  name: string;
+  vlan: number | null;
+  status: AccountStatus;
+}
+
 export interface SubscriberPortalData {
   success?: boolean;
   matched?: boolean;
+  requiresLookup?: boolean;
+  notFound?: boolean;
+  searchQuery?: string;
   noSubscribers?: boolean;
   detectedVlan: number | null;
-  detectedIp: string;
-  matchedBy: 'ip_dhcp' | 'ip_router_address' | 'vlan_subnet' | 'vlan_param' | 'none';
+  requestIp?: string;
+  onuWanIp?: string | null;
+  matchedBy: 'account_id' | 'vlan' | 'search' | 'wan_ip_lease' | 'none';
+  multipleMatches?: SubscriberPortalLookupMatch[];
   subscriber?: {
     id: number;
     name: string;

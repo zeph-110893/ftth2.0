@@ -105,6 +105,12 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
   const [vlanToggleMsg, setVlanToggleMsg] = useState<{ text: string; isError?: boolean } | null>(null);
   const [showDisableConfirm, setShowDisableConfirm] = useState<boolean>(false);
 
+  // State for Internet Suspension (MikroTik Address-List UNPAID)
+  const [isSuspended, setIsSuspended] = useState<boolean>(false);
+  const [isTogglingSuspension, setIsTogglingSuspension] = useState<boolean>(false);
+  const [suspensionMsg, setSuspensionMsg] = useState<{ text: string; isError?: boolean } | null>(null);
+  const [showSuspendConfirm, setShowSuspendConfirm] = useState<boolean>(false);
+
   // State for DHCP lease deletion
   const [leaseToDelete, setLeaseToDelete] = useState<MikroTikDhcpLease | null>(null);
   const [isDeletingLease, setIsDeletingLease] = useState<boolean>(false);
@@ -189,9 +195,20 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
     setShowDeleteSubConfirm(false);
   }, [subscriber?.id, subscriber?.vlan, subscriber?.rate, subscriber?.status, subscriber?.macAddress]);
 
-  // Fetch live interface status from RouterOS when subscriber.vlan changes
+  // Fetch live suspension status and interface status from RouterOS when subscriber changes
   useEffect(() => {
     let isMounted = true;
+    if (subscriber?.id) {
+      authFetch(`/api/mikrotik/subscriber-suspension/${subscriber.id}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (isMounted && data && typeof data.isSuspended === 'boolean') {
+            setIsSuspended(data.isSuspended);
+          }
+        })
+        .catch(() => {});
+    }
+
     if (subscriber && subscriber.vlan !== null && subscriber.vlan !== undefined) {
       authFetch('/api/mikrotik/interfaces')
         .then((res) => res.json())
@@ -598,6 +615,41 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
     }
   };
 
+  // Toggle Subscriber Internet Suspension (MikroTik address-list UNPAID)
+  const handleToggleSuspension = async (suspend: boolean) => {
+    if (isReadOnly || !subscriber) return;
+
+    setIsTogglingSuspension(true);
+    setSuspensionMsg(null);
+    try {
+      const res = await authFetch('/api/mikrotik/toggle-suspension', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subId: subscriber.id, suspend }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setIsSuspended(suspend);
+        setSuspensionMsg({
+          text: data.message || `Subscriber is now ${suspend ? 'SUSPENDED (Added to address-list UNPAID)' : 'RESTORED (Removed from UNPAID)'}.`,
+          isError: false,
+        });
+      } else {
+        setSuspensionMsg({
+          text: data.error || 'Failed to update suspension status on RouterOS.',
+          isError: true,
+        });
+      }
+    } catch (err: any) {
+      setSuspensionMsg({
+        text: 'Error connecting to RouterOS server: ' + err.message,
+        isError: true,
+      });
+    } finally {
+      setIsTogglingSuspension(false);
+    }
+  };
+
   // Toggle RouterOS VLAN Interface
   const handleToggleVlanInterface = async (enable: boolean) => {
     if (isReadOnly) return;
@@ -612,18 +664,19 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
       const res = await authFetch('/api/mikrotik/toggle-vlan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vlan: subscriber.vlan, disable: !enable }),
+        body: JSON.stringify({ vlan: subscriber.vlan, subId: subscriber.id, disable: !enable }),
       });
       const data = await res.json();
       if (data.success) {
         setIsVlanEnabled(enable);
+        setIsSuspended(!enable);
         setVlanToggleMsg({
-          text: data.message || `Interface VLAN-${subscriber.vlan} is now ${enable ? 'ENABLED' : 'DISABLED'} on RouterOS`,
+          text: data.message || `Subscriber internet is now ${enable ? 'RESTORED' : 'SUSPENDED (UNPAID)'} on RouterOS`,
           isError: false,
         });
       } else {
         setVlanToggleMsg({
-          text: data.error || `Failed to toggle interface VLAN-${subscriber.vlan}`,
+          text: data.error || `Failed to update status for VLAN-${subscriber.vlan}`,
           isError: true,
         });
       }
@@ -862,16 +915,21 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                       Unassigned
                     </span>
                   )}
-                  {subscriber.vlan && (
+                  {isSuspended ? (
                     <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1.5 ${
-                        isVlanEnabled
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : 'bg-rose-50 text-rose-700 border border-rose-200'
-                      }`}
+                      className="px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1.5 bg-rose-50 text-rose-700 border border-rose-200"
+                      title="Subscriber IP is in MikroTik firewall address-list 'UNPAID' (Internet Suspended)"
                     >
-                      <span className={`w-1.5 h-1.5 rounded-full ${isVlanEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-                      <span>{isVlanEnabled ? 'ONLINE' : 'DISABLED'}</span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                      <span>SUSPENDED (UNPAID)</span>
+                    </span>
+                  ) : (
+                    <span
+                      className="px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      title="Internet access is active"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>ONLINE / ACTIVE</span>
                     </span>
                   )}
                 </div>
@@ -1520,77 +1578,82 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
               </div>
             )}
 
-            {/* RouterOS Interface Power Switch Toggle */}
-            {subscriber.vlan !== null && subscriber.vlan !== undefined && Number(subscriber.vlan) > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">
-                <div className="flex items-center gap-2">
+            {/* RouterOS Internet Suspension Control via Address-List UNPAID */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-800">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                    RouterOS Port State:
+                    Internet Access:
                   </span>
                   <span
                     className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 border ${
-                      isVlanEnabled
-                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                        : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                      isSuspended
+                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                        : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                     }`}
                   >
-                    <span className={`w-1.5 h-1.5 rounded-full ${isVlanEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
-                    {isVlanEnabled ? 'ENABLED' : 'DISABLED'}
+                    <span className={`w-1.5 h-1.5 rounded-full ${isSuspended ? 'bg-rose-400' : 'bg-emerald-400 animate-pulse'}`} />
+                    {isSuspended ? 'SUSPENDED (IN UNPAID LIST)' : 'ACTIVE (NORMAL ACCESS)'}
                   </span>
-                </div>
-
-                {/* Toggle Switch Button */}
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-400 font-medium">
-                    {isVlanEnabled ? 'Disable VLAN' : 'Enable VLAN'}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={isTogglingVlan || isReadOnly}
-                    onClick={() => {
-                      if (isReadOnly) return;
-                      if (isVlanEnabled) {
-                        setShowDisableConfirm(true);
-                      } else {
-                        handleToggleVlanInterface(true);
-                      }
-                    }}
-                    className={`relative inline-flex h-7 w-14 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-900 ${
-                      isVlanEnabled ? 'bg-emerald-500' : 'bg-slate-700'
-                    } ${isTogglingVlan || isReadOnly ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
-                    title={isReadOnly ? 'Read-only account permission' : `Click to ${isVlanEnabled ? 'Disable' : 'Enable'} VLAN-${subscriber.vlan} interface on RouterOS`}
-                  >
-                    <span className="sr-only">Toggle VLAN Interface</span>
-                    <span
-                      className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out flex items-center justify-center ${
-                        isVlanEnabled ? 'translate-x-7' : 'translate-x-0'
-                      }`}
-                    >
-                      {isTogglingVlan ? (
-                        <Loader2 className="w-3.5 h-3.5 text-slate-700 animate-spin" />
-                      ) : isVlanEnabled ? (
-                        <Power className="w-3.5 h-3.5 text-emerald-600" />
-                      ) : (
-                        <Power className="w-3.5 h-3.5 text-slate-400" />
-                      )}
+                  {subscriber.vlan && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                      VLAN {subscriber.vlan}: ONLINE
                     </span>
-                  </button>
+                  )}
                 </div>
+                <p className="text-[10px] text-slate-400">
+                  Suspension adds subscriber IP to MikroTik address-list <strong className="text-slate-200">UNPAID</strong> while keeping the VLAN online.
+                </p>
               </div>
-            )}
 
-            {/* Toggle status message */}
-            {vlanToggleMsg && (
+              {/* Action Button */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={isTogglingSuspension || isReadOnly}
+                  onClick={() => {
+                    if (isReadOnly) return;
+                    if (isSuspended) {
+                      handleToggleSuspension(false);
+                    } else {
+                      setShowSuspendConfirm(true);
+                    }
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-xs ${
+                    isSuspended
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                      : 'bg-rose-600 hover:bg-rose-500 text-white'
+                  }`}
+                  title={
+                    isReadOnly
+                      ? 'Read-only account permission'
+                      : isSuspended
+                      ? 'Restore internet (Remove from UNPAID address-list)'
+                      : 'Suspend internet (Add to UNPAID address-list)'
+                  }
+                >
+                  {isTogglingSuspension ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Power className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isSuspended ? 'Restore Internet' : 'Suspend Internet'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Suspension status message */}
+            {suspensionMsg && (
               <div
                 className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between transition-all ${
-                  vlanToggleMsg.isError
+                  suspensionMsg.isError
                     ? 'bg-rose-500/20 text-rose-200 border border-rose-500/40'
                     : 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40'
                 }`}
               >
-                <span>{vlanToggleMsg.text}</span>
+                <span>{suspensionMsg.text}</span>
                 <button
-                  onClick={() => setVlanToggleMsg(null)}
+                  onClick={() => setSuspensionMsg(null)}
                   className="text-slate-400 hover:text-white cursor-pointer ml-2 text-xs"
                 >
                   ✕
@@ -2151,8 +2214,8 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
         </div>
       </div>
 
-      {/* Disable Confirmation Modal */}
-      {showDisableConfirm && (
+      {/* Suspend Internet Confirmation Modal (MikroTik address-list UNPAID) */}
+      {(showSuspendConfirm || showDisableConfirm) && (
         <div className="fixed inset-0 z-60 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6 space-y-4 animate-in fade-in zoom-in duration-150">
             <div className="flex items-center gap-3 text-rose-600">
@@ -2160,36 +2223,40 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                 <AlertTriangle className="w-6 h-6 text-rose-600" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">Disable VLAN-{subscriber.vlan} Interface?</h3>
-                <p className="text-xs text-slate-500 mt-0.5">RouterOS Interface Control</p>
+                <h3 className="text-base font-bold text-slate-900">Suspend Internet for {nameStr}?</h3>
+                <p className="text-xs text-slate-500 mt-0.5">MikroTik Firewall Address-List: UNPAID</p>
               </div>
             </div>
             <p className="text-xs font-medium text-slate-600 leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-              Disabling <strong className="text-slate-900">VLAN-{subscriber.vlan}</strong> will immediately suspend internet access and local network connectivity for <strong className="text-slate-900">{nameStr}</strong> (Subnet 172.16.{subscriber.vlan}.0/24).
+              Suspending will add the subscriber's IP address to the MikroTik firewall address-list <strong className="text-rose-600">UNPAID</strong>. Their web traffic will be blocked or redirected to payment instructions, while their VLAN port remains <strong className="text-emerald-700">ONLINE</strong> so the router stays reachable.
             </p>
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
                 type="button"
-                onClick={() => setShowDisableConfirm(false)}
+                onClick={() => {
+                  setShowSuspendConfirm(false);
+                  setShowDisableConfirm(false);
+                }}
                 className="px-4 py-2 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={isTogglingVlan}
+                disabled={isTogglingSuspension || isTogglingVlan}
                 onClick={async () => {
+                  setShowSuspendConfirm(false);
                   setShowDisableConfirm(false);
-                  await handleToggleVlanInterface(false);
+                  await handleToggleSuspension(true);
                 }}
                 className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
               >
-                {isTogglingVlan ? (
+                {isTogglingSuspension || isTogglingVlan ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <Power className="w-3.5 h-3.5" />
                 )}
-                <span>Confirm Disable</span>
+                <span>Confirm Suspension</span>
               </button>
             </div>
           </div>

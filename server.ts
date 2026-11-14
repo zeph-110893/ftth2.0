@@ -13,6 +13,11 @@ import {
   getRouterActiveSessions,
   getRouterDhcpLeases,
   getRouterIpAddresses,
+  getRouterAddressLists,
+  getSubscriberSuspensionStatus,
+  addSubscriberToUnpaidList,
+  removeSubscriberFromUnpaidList,
+  toggleSubscriberSuspension,
   deleteDhcpLease,
   pingIpAddress,
   pingMultipleIpAddresses,
@@ -145,15 +150,7 @@ async function startServer() {
 
   function getClientIp(req: express.Request): string {
     try {
-      // 1. Check query parameter override if forwarded by router captive portal or diagnostics (?ip=, ?client_ip=, ?user_ip=)
-      if (req.query) {
-        const queryIp = req.query.ip || req.query.client_ip || req.query.user_ip;
-        if (typeof queryIp === 'string' && queryIp.trim()) {
-          return cleanIpStr(queryIp);
-        }
-      }
-
-      // 2. Check standard proxy/router headers
+      // Check standard proxy/router headers for audit logging and rate limiting
       const forwarded = req.headers['x-forwarded-for'];
       if (typeof forwarded === 'string' && forwarded) {
         const first = forwarded.split(',')[0].trim();
@@ -176,7 +173,7 @@ async function startServer() {
         return cleanIpStr(xClientIp);
       }
 
-      // 3. Socket remote address
+      // Socket remote address
       if (req.socket && req.socket.remoteAddress) {
         return cleanIpStr(req.socket.remoteAddress);
       }
@@ -184,47 +181,6 @@ async function startServer() {
     } catch {
       return '127.0.0.1';
     }
-  }
-
-  // Automatic VLAN & Subscriber Detection engine by client IP
-  // Optimized for instantaneous matching based on subscriber IP 3rd octet (e.g. 192.168.105.X -> VLAN 105)
-  function autoDetectSubscriberByIp(
-    clientIp: string,
-    subscribers: any[]
-  ): {
-    matched: boolean;
-    vlan: number | null;
-    matchedBy: 'vlan_subnet' | 'ip_dhcp' | 'none';
-    subscriber: any | null;
-  } {
-    if (!clientIp || !Array.isArray(subscribers) || subscribers.length === 0) {
-      return { matched: false, vlan: null, matchedBy: 'none', subscriber: null };
-    }
-
-    const cleanIp = cleanIpStr(clientIp);
-    const ipParts = cleanIp.split('.').map((p) => parseInt(p, 10));
-
-    // 1. PRIMARY & FASTEST: Direct 3rd Octet Match (Standard ISP / FTTH Subnet pattern: 192.168.<VLAN>.X, 10.0.<VLAN>.X, 172.16.<VLAN>.X, 100.64.<VLAN>.X)
-    if (ipParts.length === 4 && !ipParts.some(isNaN)) {
-      const thirdOctet = ipParts[2];
-      if (thirdOctet > 0) {
-        const subBy3rd = subscribers.find((s: any) => Number(s.vlan) === thirdOctet);
-        if (subBy3rd) {
-          return { matched: true, vlan: thirdOctet, matchedBy: 'vlan_subnet', subscriber: subBy3rd };
-        }
-      }
-
-      // Check 2nd octet if network uses 10.<VLAN>.X.X scheme
-      const secondOctet = ipParts[1];
-      if (secondOctet > 0) {
-        const subBy2nd = subscribers.find((s: any) => Number(s.vlan) === secondOctet);
-        if (subBy2nd) {
-          return { matched: true, vlan: secondOctet, matchedBy: 'vlan_subnet', subscriber: subBy2nd };
-        }
-      }
-    }
-
-    return { matched: false, vlan: null, matchedBy: 'none', subscriber: null };
   }
 
   // Helper to record persistent audit logs for key administrative actions
@@ -515,17 +471,18 @@ async function startServer() {
     return `${mb.toFixed(1)} MB`;
   }
 
-  // Public Subscriber Portal Subscribers endpoint (disabled for public self-service security)
+  // Public Subscriber Portal Subscribers directory endpoint (disabled to protect subscriber privacy)
   app.get('/api/portal/subscribers', async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
-    // Manual selection is disabled per policy: subscribers are strictly auto-detected by IP
     res.json({ success: true, subscribers: [] });
   });
 
-  // Public Subscriber Portal Info (Strictly Auto-detected based on client IP)
+  // Public Subscriber Portal Info (IPoE: Request IP + live RouterOS DHCP WAN IP matching, with account lookup fallback)
   app.get('/api/portal/subscriber-info', async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     try {
+      const requestIp = getClientIp(req);
+
       let subscribers: any[] = [];
       try {
         subscribers = await db.all('SELECT * FROM subscribers ORDER BY dueDay ASC, id ASC');
@@ -533,15 +490,14 @@ async function startServer() {
         console.warn('DB query in subscriber-info failed:', dbErr);
       }
 
-      const clientIp = getClientIp(req);
-
       if (!subscribers || subscribers.length === 0) {
         return res.json({
           success: true,
           matched: false,
           noSubscribers: true,
           detectedVlan: null,
-          detectedIp: clientIp,
+          requestIp,
+          onuWanIp: null,
           matchedBy: 'none',
           subscriber: null,
           billing: null,
@@ -550,41 +506,213 @@ async function startServer() {
         });
       }
 
-      // Run instantaneous IP-to-VLAN 3rd octet auto-detection
-      const detection = autoDetectSubscriberByIp(clientIp, subscribers);
+      // Query MikroTik DHCP leases once so we can resolve ONU WAN IP (and optionally match live WAN IPoE leases)
+      let routerDhcpResult: any = null;
+      try {
+        routerDhcpResult = await getRouterDhcpLeases(db, subscribers);
+      } catch {
+        routerDhcpResult = null;
+      }
+      const allLeases: any[] = Array.isArray(routerDhcpResult?.leases) ? routerDhcpResult.leases : [];
+      const isLiveDhcp = Boolean(routerDhcpResult?.success && routerDhcpResult?.mode !== 'fallback');
 
-      // If client IP is not recognized or not matching any subscriber
-      if (!detection.matched || !detection.subscriber) {
-        return res.json({
-          success: true,
-          matched: false,
-          detectedVlan: null,
-          detectedIp: clientIp,
-          matchedBy: 'none',
-          subscriber: null,
-          billing: null,
-          bandwidth: null,
-          devices: [],
-        });
+      const rawSubId = typeof req.query.subId === 'string'
+        ? req.query.subId.trim()
+        : (typeof req.query.id === 'string' ? req.query.id.trim() : '');
+      const rawVlan = typeof req.query.vlan === 'string' ? req.query.vlan.trim() : '';
+      const rawQuery = typeof req.query.query === 'string'
+        ? req.query.query.trim()
+        : (typeof req.query.q === 'string' ? req.query.q.trim() : '');
+
+      let selectedSub: any = null;
+      let matchedBy: 'account_id' | 'vlan' | 'search' | 'wan_ip_lease' | 'none' = 'none';
+
+      if (rawSubId) {
+        const parsedId = parseInt(rawSubId.replace(/^#/, ''), 10);
+        if (!isNaN(parsedId) && parsedId > 0) {
+          selectedSub = subscribers.find((s: any) => Number(s.id) === parsedId) || null;
+          if (selectedSub) matchedBy = 'account_id';
+        }
+        if (!selectedSub) {
+          return res.json({
+            success: true,
+            matched: false,
+            requiresLookup: true,
+            notFound: true,
+            searchQuery: rawSubId,
+            detectedVlan: null,
+            requestIp,
+            onuWanIp: null,
+            matchedBy: 'none',
+            subscriber: null,
+            billing: null,
+            bandwidth: null,
+            devices: [],
+          });
+        }
+      } else if (rawVlan) {
+        const parsedVlan = parseInt(rawVlan, 10);
+        if (!isNaN(parsedVlan) && parsedVlan > 0) {
+          const vlanMatches = subscribers.filter((s: any) => Number(s.vlan) === parsedVlan);
+          if (vlanMatches.length === 1) {
+            selectedSub = vlanMatches[0];
+            matchedBy = 'vlan';
+          } else if (vlanMatches.length > 1) {
+            return res.json({
+              success: true,
+              matched: false,
+              requiresLookup: true,
+              searchQuery: rawVlan,
+              detectedVlan: null,
+              requestIp,
+              onuWanIp: null,
+              matchedBy: 'none',
+              multipleMatches: vlanMatches.slice(0, 10).map((s: any) => ({
+                id: s.id,
+                name: `${capitalizeWords(s.first || '')} ${capitalizeWords(s.last || '')}`.trim() || 'Fiber Subscriber',
+                vlan: s.vlan ? Number(s.vlan) : null,
+                status: s.status || 'Active',
+              })),
+              subscriber: null,
+              billing: null,
+              bandwidth: null,
+              devices: [],
+            });
+          }
+        }
+        if (!selectedSub) {
+          return res.json({
+            success: true,
+            matched: false,
+            requiresLookup: true,
+            notFound: true,
+            searchQuery: rawVlan,
+            detectedVlan: null,
+            requestIp,
+            onuWanIp: null,
+            matchedBy: 'none',
+            subscriber: null,
+            billing: null,
+            bandwidth: null,
+            devices: [],
+          });
+        }
+      } else if (rawQuery) {
+        const cleanQuery = rawQuery.replace(/^#/, '').trim();
+        const lowerQuery = cleanQuery.toLowerCase();
+        const digitsQuery = cleanQuery.replace(/\D/g, '');
+        const isPureNumber = /^\d+$/.test(cleanQuery);
+
+        let matches: any[] = [];
+        if (isPureNumber) {
+          const numVal = parseInt(cleanQuery, 10);
+          matches = subscribers.filter((s: any) => {
+            if (Number(s.id) === numVal || Number(s.vlan) === numVal) return true;
+            const subPhoneDigits = String(s.phone || '').replace(/\D/g, '');
+            if (digitsQuery.length >= 4 && subPhoneDigits && subPhoneDigits.endsWith(digitsQuery)) return true;
+            return false;
+          });
+        } else {
+          // Require at least 2 characters for name/text lookup
+          if (lowerQuery.length >= 2) {
+            matches = subscribers.filter((s: any) => {
+              const first = String(s.first || '').toLowerCase();
+              const last = String(s.last || '').toLowerCase();
+              const full = `${first} ${last}`.trim();
+              const rev = `${last} ${first}`.trim();
+              const phoneDigits = String(s.phone || '').replace(/\D/g, '');
+              if (full.includes(lowerQuery) || rev.includes(lowerQuery)) return true;
+              if (digitsQuery.length >= 7 && phoneDigits && phoneDigits.includes(digitsQuery)) return true;
+              return false;
+            });
+          }
+        }
+
+        if (matches.length === 1) {
+          selectedSub = matches[0];
+          matchedBy = 'search';
+        } else if (matches.length > 1) {
+          return res.json({
+            success: true,
+            matched: false,
+            requiresLookup: true,
+            searchQuery: rawQuery,
+            detectedVlan: null,
+            requestIp,
+            onuWanIp: null,
+            matchedBy: 'none',
+            multipleMatches: matches.slice(0, 10).map((s: any) => ({
+              id: s.id,
+              name: `${capitalizeWords(s.first || '')} ${capitalizeWords(s.last || '')}`.trim() || 'Fiber Subscriber',
+              vlan: s.vlan ? Number(s.vlan) : null,
+              status: s.status || 'Active',
+            })),
+            subscriber: null,
+            billing: null,
+            bandwidth: null,
+            devices: [],
+          });
+        } else {
+          return res.json({
+            success: true,
+            matched: false,
+            requiresLookup: true,
+            notFound: true,
+            searchQuery: rawQuery,
+            detectedVlan: null,
+            requestIp,
+            onuWanIp: null,
+            matchedBy: 'none',
+            subscriber: null,
+            billing: null,
+            bandwidth: null,
+            devices: [],
+          });
+        }
+      } else {
+        // Check if incoming requestIp uniquely matches a LIVE MikroTik DHCP lease (works when hosted on ISP local network before masquerade, or per-ONU public IP)
+        if (isLiveDhcp && requestIp && requestIp !== '127.0.0.1' && requestIp !== '::1') {
+          const leaseForIp = allLeases.find(
+            (l: any) => l.address && String(l.address).trim().split('/')[0] === requestIp && !String(l.id || '').startsWith('*sim-')
+          );
+          if (leaseForIp) {
+            const leaseMac = String(leaseForIp.macAddress || '').trim().toLowerCase();
+            const leaseComment = String(leaseForIp.comment || '').toLowerCase();
+            const leaseServer = String(leaseForIp.server || '').toLowerCase();
+
+            const matchedSubs = subscribers.filter((s: any) => {
+              if (leaseMac && s.macAddress && String(s.macAddress).trim().toLowerCase() === leaseMac) return true;
+              if (leaseComment && (leaseComment.includes(`id #${s.id}`) || leaseComment.includes(`subscriber #${s.id}`))) return true;
+              if (s.vlan && leaseServer && (leaseServer === `vlan${s.vlan}` || leaseServer === `vlan-${s.vlan}` || leaseServer === `dhcp${s.vlan}`)) return true;
+              return false;
+            });
+
+            if (matchedSubs.length === 1) {
+              selectedSub = matchedSubs[0];
+              matchedBy = 'wan_ip_lease';
+            }
+          }
+        }
+
+        if (!selectedSub) {
+          // Behind shared NAT or unmatched requestIp: require account lookup and still expose requestIp
+          return res.json({
+            success: true,
+            matched: false,
+            requiresLookup: true,
+            detectedVlan: null,
+            requestIp,
+            onuWanIp: null,
+            matchedBy: 'none',
+            subscriber: null,
+            billing: null,
+            bandwidth: null,
+            devices: [],
+          });
+        }
       }
 
-      const selectedSub = detection.subscriber;
-      const targetVlan = detection.vlan || (selectedSub.vlan ? Number(selectedSub.vlan) : null);
-      const matchedBy = detection.matchedBy;
-
-      if (!selectedSub) {
-        return res.json({
-          success: true,
-          noSubscribers: true,
-          detectedVlan: null,
-          detectedIp: clientIp,
-          matchedBy: 'none',
-          subscriber: null,
-          billing: null,
-          bandwidth: null,
-          devices: [],
-        });
-      }
+      const targetVlan = selectedSub.vlan ? Number(selectedSub.vlan) : null;
 
       // Format subscriber name
       const firstName = capitalizeWords(selectedSub.first || '');
@@ -702,36 +830,42 @@ async function startServer() {
       };
 
       // Filter and sanitize Connected Devices (DHCP Leases)
-      // STRICT REQUIREMENT: In DHCP list DO NOT show MAC address, ONLY device name + local IP
-      let matchingLeases: any[] = [];
-      try {
-        const routerDhcpResult = await getRouterDhcpLeases(db, subscribers);
-        const allLeases = routerDhcpResult?.leases || [];
-        matchingLeases = allLeases.filter((l: any) => {
-          if (l.server && l.server.toLowerCase().includes(`vlan${targetVlan}`)) return true;
-          if (l.address && l.address.includes(`.${targetVlan}.`)) return true;
-          if (selectedSub.macAddress && l.macAddress && l.macAddress.toLowerCase() === selectedSub.macAddress.toLowerCase()) return true;
-          if (l.comment && l.comment.toLowerCase().includes(lastName.toLowerCase())) return true;
-          return false;
-        });
-      } catch {
-        matchingLeases = [];
+      // STRICT REQUIREMENT: In DHCP list DO NOT show MAC address, ONLY device name + IP
+      const matchingLeases: any[] = allLeases.filter((l: any) => {
+        if (selectedSub.macAddress && l.macAddress && l.macAddress.toLowerCase() === selectedSub.macAddress.toLowerCase()) return true;
+        if (l.comment && (l.comment.toLowerCase().includes(`id #${selectedSub.id}`) || l.comment.toLowerCase().includes(`subscriber #${selectedSub.id}`))) return true;
+        if (targetVlan && l.server && l.server.toLowerCase().includes(`vlan${targetVlan}`)) return true;
+        if (targetVlan && l.address && l.address.includes(`.${targetVlan}.`)) return true;
+        if (lastName && l.comment && l.comment.toLowerCase().includes(lastName.toLowerCase())) return true;
+        return false;
+      });
+
+      // Resolve the ONU's live IPoE WAN IP from MikroTik DHCP leases (ignoring simulated fallback leases)
+      let onuWanIp: string | null = null;
+      if (isLiveDhcp && matchingLeases.length > 0) {
+        const macLease = selectedSub.macAddress
+          ? matchingLeases.find((l: any) => l.macAddress && l.macAddress.toLowerCase() === selectedSub.macAddress.toLowerCase() && l.address)
+          : null;
+        const reqLease = requestIp
+          ? matchingLeases.find((l: any) => l.address && String(l.address).trim().split('/')[0] === requestIp)
+          : null;
+        const primaryLease = macLease || reqLease || matchingLeases.find((l: any) => Boolean(l.address));
+        onuWanIp = primaryLease?.address ? String(primaryLease.address).trim().split('/')[0] : null;
       }
 
-      // If no live leases were matched, generate representative connected home devices
       let devicesList: Array<{ id: string; deviceName: string; ipAddress: string; status: string; isStatic: boolean }> = [];
 
       if (matchingLeases.length > 0) {
         devicesList = matchingLeases.map((l: any, idx: number) => {
           let devName = l.hostName || l['host-name'] || l.comment || '';
           if (!devName || devName.trim() === '' || devName.toLowerCase() === 'unknown') {
-            const sampleNames = ['LivingRoom-SmartTV', 'iPhone-Wireless', 'Android-Phone', 'Office-Laptop', 'Tablet-Home'];
+            const sampleNames = ['ONU-IPoE-Gateway', 'Home-Router', 'Customer-ONT', 'IPoE-CPE'];
             devName = sampleNames[idx % sampleNames.length];
           }
           return {
             id: l.id || `dev-${idx + 1}`,
             deviceName: devName.trim(),
-            ipAddress: l.address || `192.168.${targetVlan}.${10 + idx}`,
+            ipAddress: l.address || 'Dynamic IPoE',
             status: l.status || 'bound',
             isStatic: Boolean(l.disabled === false && !l.expiresAfter),
           };
@@ -744,7 +878,8 @@ async function startServer() {
         success: true,
         matched: true,
         detectedVlan: targetVlan,
-        detectedIp: clientIp,
+        requestIp,
+        onuWanIp,
         matchedBy,
         subscriber: {
           id: selectedSub.id || 1,
@@ -1283,6 +1418,23 @@ async function startServer() {
         ipAddress: getClientIp(req),
       });
 
+      // Auto-unsuspend from UNPAID address list if subscriber is now paid up
+      try {
+        const allPayments = await db.all('SELECT * FROM payments WHERE sub = ?', [payment.sub]);
+        const subRecord = await db.get('SELECT * FROM subscribers WHERE id = ?', [payment.sub]);
+        if (subRecord && subRecord.status === 'Active') {
+          const now = new Date();
+          const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+          const currentMonthStr = `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+          const monthsPaid = new Set(allPayments.map((p: any) => p.month));
+          if (monthsPaid.has(currentMonthStr)) {
+            await removeSubscriberFromUnpaidList(db, payment.sub, [subRecord]);
+          }
+        }
+      } catch (err) {
+        console.warn('[Payment Auto-Unsuspend Warning]', err);
+      }
+
       res.json(newPayment);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1573,6 +1725,15 @@ async function startServer() {
     }
   });
 
+  app.get('/api/mikrotik/ip-addresses', async (req, res) => {
+    try {
+      const result = await getRouterIpAddresses(db);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/mikrotik/secrets', async (req, res) => {
     try {
       const subscribers = await db.all('SELECT * FROM subscribers');
@@ -1618,14 +1779,17 @@ async function startServer() {
 
   app.post('/api/mikrotik/ping', async (req, res) => {
     try {
-      const { address, interface: iface, macAddress, vlan } = req.body;
+      const { address, interface: iface, macAddress, vlan, mode, count } = req.body;
       if (!address) {
         return res.status(400).json({ error: 'IP address is required' });
       }
+      const pingMode = mode === 'icmp' ? 'icmp' : (mode === 'arp-ping' ? 'arp-ping' : 'arp-ping');
       const result = await pingIpAddress(db, address, {
         interface: iface,
         macAddress,
         vlan,
+        mode: pingMode,
+        count,
       });
       res.json({ success: true, result });
     } catch (err: any) {
@@ -1650,6 +1814,58 @@ async function startServer() {
     }
   });
 
+  // Get all MikroTik firewall address-lists (e.g. UNPAID)
+  app.get('/api/mikrotik/address-lists', async (req, res) => {
+    try {
+      const subscribers = await db.all('SELECT * FROM subscribers');
+      const result = await getRouterAddressLists(db, subscribers);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get specific subscriber suspension status (checks address-list UNPAID)
+  app.get('/api/mikrotik/subscriber-suspension/:subId', async (req, res) => {
+    try {
+      const subId = Number(req.params.subId);
+      const subscribers = await db.all('SELECT * FROM subscribers');
+      const result = await getSubscriberSuspensionStatus(db, subId, subscribers);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Toggle subscriber internet suspension (adds/removes from address-list UNPAID instead of disabling VLAN)
+  app.post('/api/mikrotik/toggle-suspension', async (req, res) => {
+    try {
+      const { subId, suspend, targetIp } = req.body;
+      const currentUser = (req as any).user;
+      if (!subId) {
+        return res.status(400).json({ error: 'subId is required' });
+      }
+      const subscribers = await db.all('SELECT * FROM subscribers');
+      const targetSub = subscribers.find((s) => s.id === Number(subId));
+      const result: any = await toggleSubscriberSuspension(db, Number(subId), Boolean(suspend), subscribers, targetIp);
+
+      await recordAuditLog(db, {
+        userId: currentUser?.userId,
+        username: currentUser?.username || 'admin',
+        userRole: currentUser?.role || 'admin',
+        action: suspend ? 'MIKROTIK_SUBSCRIBER_SUSPEND' : 'MIKROTIK_SUBSCRIBER_RESTORE',
+        category: 'mikrotik',
+        description: `${suspend ? 'Suspended' : 'Restored'} internet for Subscriber #${subId}${targetSub ? ` (${targetSub.first} ${targetSub.last})` : ''} via MikroTik address-list 'UNPAID' (VLAN ${targetSub?.vlan || 'N/A'} kept enabled)`,
+        details: { subId, suspend, targetIp, result },
+        ipAddress: getClientIp(req),
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/mikrotik/toggle-user', async (req, res) => {
     try {
       const { subId, disable } = req.body;
@@ -1661,27 +1877,35 @@ async function startServer() {
     }
   });
 
+  // toggle-vlan: redirects to address-list UNPAID per user instruction
   app.post('/api/mikrotik/toggle-vlan', async (req, res) => {
     try {
-      const { vlan, disable } = req.body;
+      const { vlan, subId, disable } = req.body;
       const currentUser = (req as any).user;
-      if (!vlan && vlan !== 0) {
-        return res.status(400).json({ error: 'VLAN ID is required' });
-      }
       const subscribers = await db.all('SELECT * FROM subscribers');
+      
+      let targetSub = subId ? subscribers.find((s) => s.id === Number(subId)) : null;
+      if (!targetSub && (vlan || vlan === 0)) {
+        targetSub = subscribers.find((s) => Number(s.vlan) === Number(vlan));
+      }
+
+      if (targetSub) {
+        const result: any = await toggleSubscriberSuspension(db, targetSub.id, Boolean(disable), subscribers);
+        await recordAuditLog(db, {
+          userId: currentUser?.userId,
+          username: currentUser?.username || 'admin',
+          userRole: currentUser?.role || 'admin',
+          action: disable ? 'MIKROTIK_SUBSCRIBER_SUSPEND' : 'MIKROTIK_SUBSCRIBER_RESTORE',
+          category: 'mikrotik',
+          description: `${disable ? 'Suspended' : 'Restored'} internet for Subscriber #${targetSub.id} (${targetSub.first} ${targetSub.last}) via address-list 'UNPAID' (VLAN ${targetSub.vlan} active)`,
+          details: { vlan: targetSub.vlan, subId: targetSub.id, disable, result },
+          ipAddress: getClientIp(req),
+        });
+        return res.json(result);
+      }
+
+      // Fallback if no matching subscriber found: toggle raw interface
       const result: any = await toggleVlanInterface(db, vlan, Boolean(disable), subscribers);
-
-      await recordAuditLog(db, {
-        userId: currentUser?.userId,
-        username: currentUser?.username || 'admin',
-        userRole: currentUser?.role || 'admin',
-        action: disable ? 'MIKROTIK_VLAN_DISABLE' : 'MIKROTIK_VLAN_ENABLE',
-        category: 'mikrotik',
-        description: `${disable ? 'Disabled' : 'Enabled'} MikroTik RouterOS VLAN Interface ${vlan}${result?.message ? ` (${result.message})` : ''}`,
-        details: { vlan, disable, result },
-        ipAddress: getClientIp(req),
-      });
-
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1723,7 +1947,7 @@ async function startServer() {
     }
   });
 
-  // Check Overdue Subscribers and automatically disable their VLAN interfaces
+  // Check Overdue Subscribers and automatically add them to address-list UNPAID (instead of disabling VLAN)
   app.post('/api/mikrotik/check-overdue', async (req, res) => {
     try {
       const currentUser = (req as any).user;
@@ -1735,7 +1959,7 @@ async function startServer() {
         userRole: currentUser?.role || 'admin',
         action: 'MIKROTIK_OVERDUE_CHECK',
         category: 'mikrotik',
-        description: `Executed overdue VLAN check: found ${result.overdueSubscribersCount} overdue subscriber(s), processed ${result.processed.length} VLAN actions`,
+        description: `Executed overdue check: found ${result.overdueSubscribersCount} overdue subscriber(s), synced with MikroTik address-list 'UNPAID'`,
         details: result,
         ipAddress: getClientIp(req),
       });
