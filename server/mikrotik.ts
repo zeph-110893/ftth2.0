@@ -420,16 +420,17 @@ export async function getRouterDhcpLeases(db: SqliteWrapper, subscribers: any[] 
       })),
     };
   } catch (err: any) {
-    // If the router is unreachable in preview/offline sandbox, generate realistic DHCP leases for subscribers with VLANs
+    // If the router is unreachable in preview/offline sandbox, generate fallback DHCP leases matching the 172.16.x.x network format
     const fallbackLeases: any[] = [];
     for (const sub of subscribers) {
       if (sub.vlan && Number(sub.vlan) > 0) {
         const vlanNum = Number(sub.vlan);
+        const thirdOctet = vlanNum <= 254 ? vlanNum : ((vlanNum - 1) % 254) + 1;
         fallbackLeases.push({
           id: `*sim-${sub.id}-1`,
-          address: `192.168.${vlanNum}.10`,
-          macAddress: sub.macAddress || `48:8F:5A:${String(vlanNum).padStart(2, '0')}:12:34`,
-          hostName: `${sub.last}-Gateway`,
+          address: `172.16.${thirdOctet}.10`,
+          macAddress: sub.macAddress || `48:8F:5A:${String(thirdOctet).padStart(2, '0')}:12:34`,
+          hostName: `${sub.last}-ONU`,
           server: `vlan${vlanNum}`,
           status: 'bound',
           disabled: false,
@@ -437,8 +438,8 @@ export async function getRouterDhcpLeases(db: SqliteWrapper, subscribers: any[] 
         });
         fallbackLeases.push({
           id: `*sim-${sub.id}-2`,
-          address: `192.168.${vlanNum}.25`,
-          macAddress: `A4:C3:61:${String(vlanNum).padStart(2, '0')}:56:78`,
+          address: `172.16.${thirdOctet}.25`,
+          macAddress: `A4:C3:61:${String(thirdOctet).padStart(2, '0')}:56:78`,
           hostName: `${sub.first}-Device`,
           server: `vlan${vlanNum}`,
           status: 'bound',
@@ -778,14 +779,14 @@ export async function getAddressesForSubscriber(db: SqliteWrapper, sub: any, sub
     // ignore
   }
 
-  // If subscriber has a VLAN assigned, add the subnet to ensure all devices on this VLAN are covered
+  // If subscriber has a VLAN assigned, add the 172.16.x.0/24 subnet to ensure all devices on this VLAN are covered
   if (sub.vlan !== null && sub.vlan !== undefined && Number(sub.vlan) > 0) {
-    addresses.add(`192.168.${sub.vlan}.0/24`);
+    addresses.add(`172.16.${sub.vlan}.0/24`);
   }
 
-  // If no address found yet, fallback to subscriber ID subnet
+  // If no address found yet, fallback to subscriber ID subnet in 172.16.x.0/24
   if (addresses.size === 0) {
-    addresses.add(`192.168.${sub.vlan || sub.id}.0/24`);
+    addresses.add(`172.16.${sub.vlan || sub.id}.0/24`);
   }
 
   return Array.from(addresses);

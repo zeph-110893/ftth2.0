@@ -2067,8 +2067,26 @@ async function startServer() {
   // --- VITE MIDDLEWARE / PRODUCTION STATIC ---
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa',
+    });
+    // When HMR is disabled in middlewareMode, prevent @vite/client from opening a failing WebSocket to port 24678
+    app.get('/@vite/client', async (_req, res, next) => {
+      try {
+        const transformed = await vite.transformRequest('/@vite/client');
+        if (transformed?.code) {
+          const code = transformed.code.replace(
+            'transport.connect(createHMRHandler(handleMessage));',
+            '/* HMR disabled: WebSocket transport connect skipped */'
+          );
+          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+          res.send(code);
+          return;
+        }
+      } catch {
+        // Fall through to default vite middleware
+      }
+      next();
     });
     app.use(vite.middlewares);
   } else {

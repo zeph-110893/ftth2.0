@@ -180,10 +180,10 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
         }
       });
 
-      // 3. Common IPoE / VLAN gateway presets
-      pushCandidate(`192.168.${vlanStr}.1`, `VLAN ${vlanStr} Gateway`);
+      // 3. Common IPoE / VLAN gateway presets (172.16.x.x primary)
       pushCandidate(`172.16.${vlanStr}.1`, `VLAN ${vlanStr} IPoE GW`);
       pushCandidate(`10.0.${vlanStr}.1`, `Internal ${vlanStr} GW`);
+      pushCandidate(`192.168.${vlanStr}.1`, `VLAN ${vlanStr} Local GW`);
     }
 
     return candidates;
@@ -662,7 +662,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
                       required
                       value={diagIp}
                       onChange={(e) => setDiagIp(e.target.value)}
-                      placeholder="e.g. 100.64.10.1, 192.168.105.1, or 10.0.105.2"
+                      placeholder="e.g. 172.16.105.1, 172.16.105.10, or 10.0.105.2"
                       className="w-full text-xs pl-9 pr-3 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-slate-900"
                     />
                   </div>
