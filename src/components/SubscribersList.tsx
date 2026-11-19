@@ -461,7 +461,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
               onClick={() => setIsConfirmModalOpen(true)}
               disabled={isDisablingOverdue}
               className="col-span-2 sm:col-span-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200/90 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto min-h-[34px]"
-              title="Suspend all overdue subscribers by adding their IP to MikroTik address-list UNPAID and blocking via Mangle rule"
+              title="Suspend all overdue subscribers by adding their IP to MikroTik address-list UNPAID"
             >
               <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
               <span>Suspend Overdue (UNPAID)</span>
@@ -1357,7 +1357,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                 <div>
                   <p className="font-semibold">Confirm RouterOS Action</p>
                   <p className="text-amber-800 text-[11px] mt-0.5">
-                    This action adds overdue subscribers&apos; IP addresses to the MikroTik firewall address-list <strong>UNPAID</strong> and enforces the <strong>Mangle + Forward Drop rule</strong> (<code>UNPAID_INTERNET_BLOCK</code>) to block their internet access. Their VLAN interfaces stay enabled so ONU/router links remain reachable.
+                    This action adds overdue subscribers&apos; IP addresses to the MikroTik firewall address-list <strong>UNPAID</strong> so your existing custom RouterOS firewall rules block their internet access. Their VLAN interfaces stay enabled so ONU/router links remain reachable.
                   </p>
                 </div>
               </div>

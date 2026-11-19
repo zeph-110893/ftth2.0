@@ -294,14 +294,14 @@ export const ActivityView: React.FC<ActivityViewProps> = ({ currentUser }) => {
           </div>
 
           {/* Search Input */}
-          <form onSubmit={handleSearchSubmit} className="relative min-w-[240px] max-w-sm">
+          <form onSubmit={handleSearchSubmit} className="relative w-full md:w-72">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               placeholder="Search actions, users, notes..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500/50"
+              className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-8 pr-3 py-2 sm:py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500/50"
             />
           </form>
         </div>
@@ -339,93 +339,137 @@ export const ActivityView: React.FC<ActivityViewProps> = ({ currentUser }) => {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-800 bg-slate-950/60 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                  <th className="py-3 px-4">Timestamp</th>
-                  <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">User</th>
-                  <th className="py-3 px-4">Action & Description</th>
-                  <th className="py-3 px-4 text-right">Details</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 text-xs">
-                {logs.map((log) => {
-                  const meta = getCategoryMeta(log.category);
-                  const Icon = meta.icon;
-                  return (
-                    <tr
-                      key={log.id}
-                      className="hover:bg-slate-800/40 transition-colors group cursor-pointer"
-                      onClick={() => setSelectedLog(log)}
-                    >
-                      {/* Timestamp */}
-                      <td className="py-3 px-4 whitespace-nowrap text-slate-400 font-mono text-[11px]">
-                        <div className="flex items-center gap-1.5">
-                          <Clock className="w-3 h-3 text-slate-500 shrink-0" />
-                          <span>{formatLogDate(log.timestamp)}</span>
-                        </div>
-                      </td>
+          <>
+            {/* Mobile Activity Cards */}
+            <div className="block md:hidden divide-y divide-slate-800/80">
+              {logs.map((log) => {
+                const meta = getCategoryMeta(log.category);
+                const Icon = meta.icon;
+                return (
+                  <div
+                    key={log.id}
+                    onClick={() => setSelectedLog(log)}
+                    className="p-3.5 space-y-2 hover:bg-slate-800/40 active:bg-slate-800/60 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold border ${meta.color}`}>
+                        <Icon className="w-3 h-3 shrink-0" />
+                        <span>{meta.label}</span>
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {formatLogDate(log.timestamp)}
+                      </span>
+                    </div>
 
-                      {/* Category Badge */}
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold border ${meta.color}`}
-                        >
-                          <Icon className="w-3 h-3 shrink-0" />
-                          <span>{meta.label}</span>
-                        </span>
-                      </td>
+                    <div className="text-xs text-slate-200 font-medium leading-snug">
+                      <span className="font-mono text-[10px] font-bold text-cyan-300 mr-1.5 bg-slate-950/80 px-1.5 py-0.5 rounded border border-slate-800">
+                        {log.action}
+                      </span>
+                      <span>{log.description}</span>
+                    </div>
 
-                      {/* User */}
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-[10px] font-bold text-cyan-300">
-                            {log.username ? log.username[0].toUpperCase() : 'U'}
+                    <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+                      <span className="font-semibold text-slate-300">
+                        {log.username}{log.ipAddress ? ` • ${log.ipAddress}` : ''}
+                      </span>
+                      {log.details && (
+                        <span className="text-cyan-400 font-semibold">View Data &rarr;</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Desktop Activity Table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-950/60 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    <th className="py-3 px-4">Timestamp</th>
+                    <th className="py-3 px-4">Category</th>
+                    <th className="py-3 px-4">User</th>
+                    <th className="py-3 px-4">Action & Description</th>
+                    <th className="py-3 px-4 text-right">Details</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-xs">
+                  {logs.map((log) => {
+                    const meta = getCategoryMeta(log.category);
+                    const Icon = meta.icon;
+                    return (
+                      <tr
+                        key={log.id}
+                        className="hover:bg-slate-800/40 transition-colors group cursor-pointer"
+                        onClick={() => setSelectedLog(log)}
+                      >
+                        {/* Timestamp */}
+                        <td className="py-3 px-4 whitespace-nowrap text-slate-400 font-mono text-[11px]">
+                          <div className="flex items-center gap-1.5">
+                            <Clock className="w-3 h-3 text-slate-500 shrink-0" />
+                            <span>{formatLogDate(log.timestamp)}</span>
                           </div>
-                          <div>
-                            <div className="font-semibold text-slate-200">{log.username}</div>
-                            {log.ipAddress && (
-                              <div className="text-[10px] text-slate-500 font-mono">{log.ipAddress}</div>
-                            )}
-                          </div>
-                        </div>
-                      </td>
+                        </td>
 
-                      {/* Description & Action */}
-                      <td className="py-3 px-4">
-                        <div>
-                          <span className="font-mono text-[10px] font-bold text-slate-400 mr-2 bg-slate-950/80 px-1.5 py-0.5 rounded border border-slate-800">
-                            {log.action}
-                          </span>
-                          <span className="text-slate-200 font-medium">{log.description}</span>
-                        </div>
-                      </td>
-
-                      {/* Details button */}
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
-                        {log.details ? (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedLog(log);
-                            }}
-                            className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-400 hover:text-cyan-300 text-[11px] font-semibold rounded-lg border border-slate-700 transition-colors"
+                        {/* Category Badge */}
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold border ${meta.color}`}
                           >
-                            View Data
-                          </button>
-                        ) : (
-                          <span className="text-[11px] text-slate-600">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                            <Icon className="w-3 h-3 shrink-0" />
+                            <span>{meta.label}</span>
+                          </span>
+                        </td>
+
+                        {/* User */}
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-6 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-[10px] font-bold text-cyan-300">
+                              {log.username ? log.username[0].toUpperCase() : 'U'}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-slate-200">{log.username}</div>
+                              {log.ipAddress && (
+                                <div className="text-[10px] text-slate-500 font-mono">{log.ipAddress}</div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Description & Action */}
+                        <td className="py-3 px-4">
+                          <div>
+                            <span className="font-mono text-[10px] font-bold text-slate-400 mr-2 bg-slate-950/80 px-1.5 py-0.5 rounded border border-slate-800">
+                              {log.action}
+                            </span>
+                            <span className="text-slate-200 font-medium">{log.description}</span>
+                          </div>
+                        </td>
+
+                        {/* Details button */}
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                          {log.details ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedLog(log);
+                              }}
+                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-400 hover:text-cyan-300 text-[11px] font-semibold rounded-lg border border-slate-700 transition-colors"
+                            >
+                              View Data
+                            </button>
+                          ) : (
+                            <span className="text-[11px] text-slate-600">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 

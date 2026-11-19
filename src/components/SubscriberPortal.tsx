@@ -793,15 +793,34 @@ export const SubscriberPortal: React.FC<SubscriberPortalProps> = ({
               </div>
             </div>
 
-            {/* Payment History Mini-Table */}
+            {/* Payment History (Mobile Cards + Desktop Table) */}
             {data.billing.recentPayments && data.billing.recentPayments.length > 0 && (
-              <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+              <div className="bg-white rounded-2xl p-4 sm:p-6 border border-slate-200 shadow-sm space-y-4">
                 <div className="text-xs font-bold text-slate-900 uppercase tracking-wider pb-2 border-b border-slate-100 flex items-center justify-between">
                   <span>Recent Payment History</span>
                   <span className="text-slate-400 font-normal">{data.billing.recentPayments.length} recorded payments</span>
                 </div>
 
-                <div className="overflow-x-auto">
+                {/* Mobile Cards */}
+                <div className="block sm:hidden divide-y divide-slate-100">
+                  {data.billing.recentPayments.map((p, idx) => (
+                    <div key={idx} className="py-2.5 flex items-center justify-between gap-2 text-xs">
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-800">{p.month}</div>
+                        <div className="text-[11px] text-slate-500">{p.ts}</div>
+                        <div className="text-[10px] font-mono text-slate-400 truncate">
+                          {p.referenceNo || 'Counter Receipt'}
+                        </div>
+                      </div>
+                      <div className="font-mono font-bold text-emerald-600 text-sm shrink-0">
+                        ₱{p.amount.toLocaleString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Desktop Table */}
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="text-slate-400 border-b border-slate-100">

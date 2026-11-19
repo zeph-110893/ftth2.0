@@ -16,7 +16,6 @@ import {
   getRouterIpAddresses,
   getRouterAddressLists,
   getUnpaidFirewallStatus,
-  ensureUnpaidMangleBlockRule,
   removeAddressListEntryById,
   getSubscriberSuspensionStatus,
   addSubscriberToUnpaidList,
@@ -1817,36 +1816,11 @@ async function startServer() {
     }
   });
 
-  // Get live RouterOS Mangle + Filter Drop + UNPAID Address-List status
+  // Get live RouterOS UNPAID Address-List status
   app.get('/api/mikrotik/unpaid-firewall', async (req, res) => {
     try {
       res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
       const result = await getUnpaidFirewallStatus(db);
-      res.json(result);
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // Install / verify MikroTik Mangle rule (mark-packet UNPAID_INTERNET_BLOCK) + Filter drop rule
-  app.post('/api/mikrotik/unpaid-firewall/ensure', async (req, res) => {
-    try {
-      const currentUser = (req as any).user;
-      const result = await ensureUnpaidMangleBlockRule(db);
-
-      await recordAuditLog(db, {
-        userId: currentUser?.userId,
-        username: currentUser?.username || 'admin',
-        userRole: currentUser?.role || 'admin',
-        action: 'MIKROTIK_MANGLE_PROVISION',
-        category: 'mikrotik',
-        description: result.success
-          ? `Verified/installed MikroTik Mangle ('UNPAID_INTERNET_BLOCK') & Forward Drop rules for UNPAID list`
-          : `Failed to install MikroTik Mangle rules: ${result.error}`,
-        details: result,
-        ipAddress: getClientIp(req),
-      });
-
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -1952,7 +1926,7 @@ async function startServer() {
           userRole: currentUser?.role || 'admin',
           action: disable ? 'MIKROTIK_SUBSCRIBER_SUSPEND' : 'MIKROTIK_SUBSCRIBER_RESTORE',
           category: 'mikrotik',
-          description: `${disable ? 'Suspended' : 'Restored'} internet for Subscriber #${targetSub.id} (${targetSub.first} ${targetSub.last}) via address-list 'UNPAID' + Mangle rule (VLAN ${targetSub.vlan} kept active)`,
+          description: `${disable ? 'Suspended' : 'Restored'} internet for Subscriber #${targetSub.id} (${targetSub.first} ${targetSub.last}) via address-list 'UNPAID' (VLAN ${targetSub.vlan} kept active)`,
           details: { vlan: targetSub.vlan, subId: targetSub.id, disable, result },
           ipAddress: getClientIp(req),
         });
@@ -1963,7 +1937,7 @@ async function startServer() {
       if (disable) {
         return res.status(400).json({
           success: false,
-          error: `No subscriber matched VLAN ${vlan}. Disabling raw VLAN interfaces is blocked; internet suspension uses address-list 'UNPAID' and Mangle rule.`,
+          error: `No subscriber matched VLAN ${vlan}. Disabling raw VLAN interfaces is blocked; internet suspension uses address-list 'UNPAID'.`,
         });
       }
       const result: any = await toggleVlanInterface(db, vlan, false, subscribers);

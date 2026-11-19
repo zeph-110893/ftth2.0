@@ -979,9 +979,6 @@ export async function pingMultipleIpAddresses(
 }
 
 export const UNPAID_ADDRESS_LIST_NAME = 'UNPAID';
-export const UNPAID_PACKET_MARK = 'UNPAID_INTERNET_BLOCK';
-export const UNPAID_MANGLE_COMMENT = 'FTTH-SYSTEM: Mark UNPAID subscriber internet traffic for block';
-export const UNPAID_FILTER_COMMENT = 'FTTH-SYSTEM: Drop UNPAID mangle-marked internet traffic';
 
 function isValidIpv4OrCidr(addr: string): boolean {
   const m = addr.trim().match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:\/(\d{1,2}))?$/);
@@ -1011,218 +1008,13 @@ async function addRouterOSRecord(cfg: MikroTikConfigRecord, resourcePath: string
   }
 }
 
-async function moveRouterOSRuleToTop(cfg: MikroTikConfigRecord, resourcePath: string, ruleId: string, existingList: any[]) {
-  if (!ruleId || !Array.isArray(existingList) || existingList.length === 0) return;
-  const firstId = existingList[0]?.['.id'];
-  if (!firstId || firstId === ruleId) return;
-  const cleanPath = resourcePath.replace(/^\//, '');
-  try {
-    await fetchFromRouterOS(cfg, `${cleanPath}/move`, 'POST', {
-      numbers: ruleId,
-      destination: firstId,
-    }, 3000);
-  } catch {
-    // Some RouterOS versions expect numeric index destination '0'
-    try {
-      await fetchFromRouterOS(cfg, `${cleanPath}/move`, 'POST', {
-        numbers: ruleId,
-        destination: '0',
-      }, 3000);
-    } catch {
-      // ignore if move is not supported on router version
-    }
-  }
-}
-
-function parseMangleRule(item: any) {
-  return {
-    id: item['.id'] || '',
-    chain: item.chain || '',
-    action: item.action || '',
-    srcAddressList: item['src-address-list'] || '',
-    dstAddressType: item['dst-address-type'] || '',
-    newPacketMark: item['new-packet-mark'] || '',
-    newRoutingMark: item['new-routing-mark'] || '',
-    passthrough: item.passthrough === undefined ? undefined : item.passthrough === 'true' || item.passthrough === true || item.passthrough === 'yes',
-    comment: item.comment || '',
-    disabled: item.disabled === 'true' || item.disabled === true,
-    packets: item.packets !== undefined ? parseInt(String(item.packets), 10) || 0 : 0,
-    bytes: item.bytes !== undefined ? parseInt(String(item.bytes), 10) || 0 : 0,
-  };
-}
-
-function parseFilterRule(item: any) {
-  return {
-    id: item['.id'] || '',
-    chain: item.chain || '',
-    action: item.action || '',
-    packetMark: item['packet-mark'] || '',
-    srcAddressList: item['src-address-list'] || '',
-    comment: item.comment || '',
-    disabled: item.disabled === 'true' || item.disabled === true,
-    packets: item.packets !== undefined ? parseInt(String(item.packets), 10) || 0 : 0,
-    bytes: item.bytes !== undefined ? parseInt(String(item.bytes), 10) || 0 : 0,
-  };
-}
-
-function isOurUnpaidMangleRule(item: any): boolean {
-  const comment = String(item?.comment || '');
-  const list = String(item?.['src-address-list'] || '').toUpperCase();
-  const action = String(item?.action || '').toLowerCase();
-  const mark = String(item?.['new-packet-mark'] || '').toUpperCase();
-  return (
-    comment === UNPAID_MANGLE_COMMENT ||
-    (list === UNPAID_ADDRESS_LIST_NAME &&
-      item?.chain === 'prerouting' &&
-      action === 'mark-packet' &&
-      mark === UNPAID_PACKET_MARK)
-  );
-}
-
-function isOurUnpaidFilterDropRule(item: any): boolean {
-  const comment = String(item?.comment || '');
-  const action = String(item?.action || '').toLowerCase();
-  const packetMark = String(item?.['packet-mark'] || '').toUpperCase();
-  const list = String(item?.['src-address-list'] || '').toUpperCase();
-  return (
-    comment === UNPAID_FILTER_COMMENT ||
-    (item?.chain === 'forward' &&
-      action === 'drop' &&
-      (packetMark === UNPAID_PACKET_MARK || list === UNPAID_ADDRESS_LIST_NAME))
-  );
-}
-
-/**
- * Ensures MikroTik RouterOS has:
- * 1) Mangle rule in /ip/firewall/mangle:
- *    chain=prerouting src-address-list=UNPAID dst-address-type=!local action=mark-packet new-packet-mark=UNPAID_INTERNET_BLOCK passthrough=no
- * 2) Filter drop rule at top of /ip/firewall/filter forward chain:
- *    chain=forward packet-mark=UNPAID_INTERNET_BLOCK action=drop
- */
-export async function ensureUnpaidMangleBlockRule(db: SqliteWrapper) {
-  initMikrotikDb(db);
-  const cfg = getMikrotikConfig(db);
-
-  try {
-    const [mangleRaw, filterRaw] = await Promise.all([
-      fetchFromRouterOS(cfg, 'ip/firewall/mangle', 'GET', undefined, 5000),
-      fetchFromRouterOS(cfg, 'ip/firewall/filter', 'GET', undefined, 5000),
-    ]);
-
-    const mangleList = toRouterArray(mangleRaw);
-    const filterList = toRouterArray(filterRaw);
-
-    let mangleRuleRaw = mangleList.find(isOurUnpaidMangleRule);
-    let mangleActionTaken: 'created' | 'enabled' | 'verified' = 'verified';
-
-    if (!mangleRuleRaw) {
-      const manglePayload: Record<string, any> = {
-        chain: 'prerouting',
-        'src-address-list': UNPAID_ADDRESS_LIST_NAME,
-        'dst-address-type': '!local',
-        action: 'mark-packet',
-        'new-packet-mark': UNPAID_PACKET_MARK,
-        passthrough: 'no',
-        comment: UNPAID_MANGLE_COMMENT,
-        disabled: 'false',
-      };
-      const created = await addRouterOSRecord(cfg, 'ip/firewall/mangle', manglePayload);
-      mangleRuleRaw = created?.['.id'] ? created : { ...manglePayload, '.id': created?.ret || '' };
-      mangleActionTaken = 'created';
-
-      // Re-fetch or move newly created rule to top of prerouting if needed
-      if (mangleRuleRaw['.id'] && mangleList.length > 0) {
-        await moveRouterOSRuleToTop(cfg, 'ip/firewall/mangle', mangleRuleRaw['.id'], mangleList);
-      }
-    } else if (mangleRuleRaw.disabled === 'true' || mangleRuleRaw.disabled === true || mangleRuleRaw.passthrough !== 'no') {
-      await fetchFromRouterOS(cfg, `ip/firewall/mangle/${encodeURIComponent(mangleRuleRaw['.id'])}`, 'PATCH', {
-        disabled: 'false',
-        'src-address-list': UNPAID_ADDRESS_LIST_NAME,
-        'dst-address-type': '!local',
-        action: 'mark-packet',
-        'new-packet-mark': UNPAID_PACKET_MARK,
-        passthrough: 'no',
-      });
-      mangleRuleRaw.disabled = 'false';
-      mangleActionTaken = 'enabled';
-    }
-
-    let filterRuleRaw = filterList.find(isOurUnpaidFilterDropRule);
-    let filterActionTaken: 'created' | 'enabled' | 'verified' = 'verified';
-
-    if (!filterRuleRaw) {
-      const filterPayload: Record<string, any> = {
-        chain: 'forward',
-        'packet-mark': UNPAID_PACKET_MARK,
-        action: 'drop',
-        comment: UNPAID_FILTER_COMMENT,
-        disabled: 'false',
-      };
-      const created = await addRouterOSRecord(cfg, 'ip/firewall/filter', filterPayload);
-      filterRuleRaw = created?.['.id'] ? created : { ...filterPayload, '.id': created?.ret || '' };
-      filterActionTaken = 'created';
-
-      // Place above fasttrack-connection / accept established rules so UNPAID drops immediately
-      if (filterRuleRaw['.id'] && filterList.length > 0) {
-        await moveRouterOSRuleToTop(cfg, 'ip/firewall/filter', filterRuleRaw['.id'], filterList);
-      }
-    } else {
-      const needsPatch =
-        filterRuleRaw.disabled === 'true' ||
-        filterRuleRaw.disabled === true ||
-        filterRuleRaw['packet-mark'] !== UNPAID_PACKET_MARK ||
-        filterRuleRaw.action !== 'drop';
-      if (needsPatch) {
-        await fetchFromRouterOS(cfg, `ip/firewall/filter/${encodeURIComponent(filterRuleRaw['.id'])}`, 'PATCH', {
-          disabled: 'false',
-          'packet-mark': UNPAID_PACKET_MARK,
-          action: 'drop',
-        });
-        filterRuleRaw.disabled = 'false';
-        filterActionTaken = 'enabled';
-      }
-      // Ensure drop rule is above any fasttrack/established rule
-      const firstForward = filterList.find((r: any) => r.chain === 'forward');
-      if (firstForward && firstForward['.id'] !== filterRuleRaw['.id']) {
-        await moveRouterOSRuleToTop(cfg, 'ip/firewall/filter', filterRuleRaw['.id'], [firstForward]);
-      }
-    }
-
-    return {
-      success: true,
-      mangleActionTaken,
-      filterActionTaken,
-      mangleRule: parseMangleRule(mangleRuleRaw),
-      dropRule: parseFilterRule(filterRuleRaw),
-      message: `RouterOS Mangle ('${UNPAID_PACKET_MARK}') and Forward Drop rules are active for address-list '${UNPAID_ADDRESS_LIST_NAME}'.`,
-    };
-  } catch (err: any) {
-    return {
-      success: false,
-      error: err.message || 'Failed to provision MikroTik Mangle/Firewall rules',
-      mangleRule: null,
-      dropRule: null,
-    };
-  }
-}
-
 export async function getUnpaidFirewallStatus(db: SqliteWrapper) {
   initMikrotikDb(db);
   const cfg = getMikrotikConfig(db);
 
   try {
-    const [mangleRaw, filterRaw, addressListRaw] = await Promise.all([
-      fetchFromRouterOS(cfg, 'ip/firewall/mangle', 'GET', undefined, 5000),
-      fetchFromRouterOS(cfg, 'ip/firewall/filter', 'GET', undefined, 5000),
-      fetchFromRouterOS(cfg, 'ip/firewall/address-list', 'GET', undefined, 5000),
-    ]);
-
-    const mangleArr = toRouterArray(mangleRaw);
-    const filterArr = toRouterArray(filterRaw);
+    const addressListRaw = await fetchFromRouterOS(cfg, 'ip/firewall/address-list', 'GET', undefined, 5000);
     const addrArr = toRouterArray(addressListRaw);
-
-    const mangleFound = mangleArr.find(isOurUnpaidMangleRule);
-    const filterFound = filterArr.find(isOurUnpaidFilterDropRule);
 
     const unpaidAddresses = addrArr
       .filter((item: any) => String(item.list || '').toUpperCase() === UNPAID_ADDRESS_LIST_NAME)
@@ -1236,30 +1028,17 @@ export async function getUnpaidFirewallStatus(db: SqliteWrapper) {
         creationTime: item['creation-time'] || '',
       }));
 
-    const parsedMangle = mangleFound ? parseMangleRule(mangleFound) : null;
-    const parsedDrop = filterFound ? parseFilterRule(filterFound) : null;
-
     return {
       success: true,
       mode: 'live' as const,
-      mangleRule: parsedMangle,
-      mangleRuleActive: Boolean(parsedMangle && !parsedMangle.disabled),
-      dropRule: parsedDrop,
-      dropRuleActive: Boolean(parsedDrop && !parsedDrop.disabled),
       unpaidAddresses,
-      mangleRulesCount: mangleArr.length,
-      filterRulesCount: filterArr.length,
     };
   } catch (err: any) {
     const stored = db.all<any>('SELECT * FROM router_address_lists WHERE UPPER(list) = ?', [UNPAID_ADDRESS_LIST_NAME]);
     return {
       success: false,
       mode: 'error' as const,
-      error: err.message || 'Unable to query RouterOS firewall',
-      mangleRule: null,
-      mangleRuleActive: false,
-      dropRule: null,
-      dropRuleActive: false,
+      error: err.message || 'Unable to query RouterOS address-list',
       unpaidAddresses: (stored || []).map((s: any) => ({
         id: s.id,
         list: s.list,
@@ -1470,8 +1249,7 @@ export async function addSubscriberToUnpaidList(
   db: SqliteWrapper,
   subId: number,
   subscribers: any[] = [],
-  targetIp?: string,
-  options?: { skipEnsureMangle?: boolean }
+  targetIp?: string
 ) {
   initMikrotikDb(db);
   const cfg = getMikrotikConfig(db);
@@ -1533,22 +1311,13 @@ export async function addSubscriberToUnpaidList(
     addedAddrs.push(addr);
   }
 
-  // Ensure the MikroTik Mangle rule (mark-packet UNPAID_INTERNET_BLOCK) and Forward drop rule are active
-  let mangleResult: any = null;
-  if (routerReachable && !options?.skipEnsureMangle) {
-    mangleResult = await ensureUnpaidMangleBlockRule(db);
-    if (!mangleResult.success && !routerError) {
-      routerError = mangleResult.error;
-    }
-  }
-
-  // Drop active FastTrack/established firewall connections for the suspended IP(s) so blocking applies immediately
+  // Drop active firewall connections for the suspended IP(s) so custom router firewall rules apply immediately
   let clearedConnections = 0;
   if (routerReachable && addedAddrs.length > 0) {
     clearedConnections = await removeFirewallConnectionsForIps(cfg, addedAddrs);
   }
 
-  // Keep VLAN interface ENABLED so management, ARP-Ping, and DHCP keep working while mangle drops internet traffic
+  // Keep VLAN interface ENABLED so management, ARP-Ping, and DHCP keep working
   if (routerReachable && sub.vlan !== null && sub.vlan !== undefined && Number(sub.vlan) > 0) {
     try {
       await toggleVlanInterface(db, sub.vlan, false, subscribers);
@@ -1562,14 +1331,13 @@ export async function addSubscriberToUnpaidList(
     routerSynced,
     error: routerSynced ? undefined : `MikroTik RouterOS sync warning: ${routerError || 'Router unreachable'}`,
     message: routerSynced
-      ? `Suspended ${sub.first} ${sub.last}: Added ${addedAddrs.join(', ')} to address-list '${UNPAID_ADDRESS_LIST_NAME}' (blocked via Mangle rule '${UNPAID_PACKET_MARK}', VLAN ${sub.vlan || 'N/A'} stays ONLINE).`
+      ? `Suspended ${sub.first} ${sub.last}: Added ${addedAddrs.join(', ')} to MikroTik address-list '${UNPAID_ADDRESS_LIST_NAME}' (VLAN ${sub.vlan || 'N/A'} stays ONLINE).`
       : `Saved locally but RouterOS update failed (${routerError}): ${addedAddrs.join(', ')} queued for address-list '${UNPAID_ADDRESS_LIST_NAME}'.`,
     subId,
     name: `${sub.first} ${sub.last}`,
     vlan: sub.vlan,
     addresses: addedAddrs,
     clearedConnections,
-    mangleRuleActive: mangleResult ? Boolean(mangleResult.success) : undefined,
     isSuspended: true,
   };
 }
@@ -1640,11 +1408,10 @@ export async function toggleSubscriberSuspension(
   subId: number,
   suspend: boolean,
   subscribers: any[] = [],
-  targetIp?: string,
-  options?: { skipEnsureMangle?: boolean }
+  targetIp?: string
 ) {
   if (suspend) {
-    return await addSubscriberToUnpaidList(db, subId, subscribers, targetIp, options);
+    return await addSubscriberToUnpaidList(db, subId, subscribers, targetIp);
   } else {
     return await removeSubscriberFromUnpaidList(db, subId, subscribers);
   }
@@ -1686,7 +1453,7 @@ export async function getSubscriberSuspensionStatus(
 }
 
 export async function toggleSubscriberInternet(db: SqliteWrapper, subId: number, disable: boolean, subscribers: any[]) {
-  // Instead of disabling VLAN or PPP secret, suspend by adding/removing from address-list UNPAID + mangle rule
+  // Instead of disabling VLAN or PPP secret, suspend by adding/removing from address-list UNPAID
   return await toggleSubscriberSuspension(db, subId, disable, subscribers);
 }
 
@@ -1703,7 +1470,7 @@ export async function batchSyncSubscribersToRouter(db: SqliteWrapper, subscriber
     const name = `${sub.first} ${sub.last}`;
 
     try {
-      const res = await toggleSubscriberSuspension(db, sub.id, shouldSuspend, subscribers, undefined, { skipEnsureMangle: true });
+      const res = await toggleSubscriberSuspension(db, sub.id, shouldSuspend, subscribers);
       results.push({
         subId: sub.id,
         name,
@@ -1724,15 +1491,12 @@ export async function batchSyncSubscribersToRouter(db: SqliteWrapper, subscriber
 
   const restoredCount = results.filter((r) => r.routerAction === 'RESTORED_ACTIVE').length;
   const suspendedCount = results.filter((r) => r.routerAction === 'SUSPENDED_UNPAID').length;
-  const mangleResult = suspendedCount > 0 ? await ensureUnpaidMangleBlockRule(db) : null;
 
   return {
     success: true,
     total: subscribers.length,
     restoredCount,
     suspendedCount,
-    mangleRuleActive: mangleResult ? Boolean(mangleResult.success) : undefined,
-    mangleError: mangleResult && !mangleResult.success ? mangleResult.error : undefined,
     details: results,
     timestamp: new Date().toLocaleString(),
   };
@@ -1747,11 +1511,11 @@ export async function toggleVlanInterface(
   const cfg = getMikrotikConfig(db);
   const vlanStr = String(vlanId).trim();
 
-  // Policy enforcement: Never disable VLAN interfaces for internet suspension — use address-list UNPAID + mangle rule
+  // Policy enforcement: Never disable VLAN interfaces for internet suspension — use address-list UNPAID only
   if (disable) {
     return {
       success: false,
-      error: `Disabling VLAN-${vlanStr} is disabled by system policy. Internet suspension uses MikroTik address-list '${UNPAID_ADDRESS_LIST_NAME}' and Mangle rule '${UNPAID_PACKET_MARK}'.`,
+      error: `Disabling VLAN-${vlanStr} is disabled by system policy. Internet suspension uses MikroTik address-list '${UNPAID_ADDRESS_LIST_NAME}'.`,
     };
   }
 
@@ -1993,7 +1757,7 @@ export async function checkAndDisableOverdueVlans(db: SqliteWrapper) {
     }
 
     if (isOverdue) {
-      const res = await addSubscriberToUnpaidList(db, sub.id, subscribers, undefined, { skipEnsureMangle: true });
+      const res = await addSubscriberToUnpaidList(db, sub.id, subscribers);
       processed.push({
         subId: sub.id,
         name: `${sub.first} ${sub.last}`,
@@ -2007,16 +1771,11 @@ export async function checkAndDisableOverdueVlans(db: SqliteWrapper) {
     }
   }
 
-  // Ensure the MikroTik Mangle rule (mark-packet UNPAID_INTERNET_BLOCK) and Forward Drop rule are active
-  const mangleResult = processed.length > 0 ? await ensureUnpaidMangleBlockRule(db) : null;
-
   return {
     success: true,
     timestamp: new Date().toISOString(),
     formattedTime: new Date().toLocaleString(),
     overdueSubscribersCount: processed.length,
-    mangleRuleActive: mangleResult ? Boolean(mangleResult.success) : undefined,
-    mangleError: mangleResult && !mangleResult.success ? mangleResult.error : undefined,
     processed,
   };
 }

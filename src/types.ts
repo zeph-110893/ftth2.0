@@ -171,44 +171,11 @@ export interface MikroTikPingResult {
   interface?: string;
 }
 
-export interface MikroTikMangleRule {
-  id: string;
-  chain: string;
-  action: string;
-  srcAddressList?: string;
-  dstAddressType?: string;
-  newPacketMark?: string;
-  newRoutingMark?: string;
-  passthrough?: boolean;
-  comment?: string;
-  disabled?: boolean;
-  packets?: number;
-  bytes?: number;
-}
-
-export interface MikroTikFilterRule {
-  id: string;
-  chain: string;
-  action: string;
-  packetMark?: string;
-  srcAddressList?: string;
-  comment?: string;
-  disabled?: boolean;
-  packets?: number;
-  bytes?: number;
-}
-
 export interface MikroTikUnpaidFirewallStatus {
   success: boolean;
   mode: 'live' | 'error';
   error?: string;
-  mangleRule: MikroTikMangleRule | null;
-  mangleRuleActive: boolean;
-  dropRule: MikroTikFilterRule | null;
-  dropRuleActive: boolean;
   unpaidAddresses: MikroTikAddressListEntry[];
-  mangleRulesCount?: number;
-  filterRulesCount?: number;
 }
 
 export type UserPermission = 'ADMIN' | 'OPERATOR';

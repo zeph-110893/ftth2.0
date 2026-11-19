@@ -82,7 +82,6 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
   const [leaseFilter, setLeaseFilter] = useState<'all' | 'bound' | 'waiting' | 'unmatched'>('all');
   const [firewallStatus, setFirewallStatus] = useState<MikroTikUnpaidFirewallStatus | null>(null);
   const [loadingFirewall, setLoadingFirewall] = useState(false);
-  const [provisioningMangle, setProvisioningMangle] = useState(false);
   const [removingEntryId, setRemovingEntryId] = useState<string | null>(null);
   
   const [config, setConfig] = useState<MikroTikConfig>({
@@ -135,28 +134,9 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
         setFirewallStatus(data);
       }
     } catch (err) {
-      console.error('Failed to fetch UNPAID firewall status:', err);
+      console.error('Failed to fetch UNPAID address-list status:', err);
     } finally {
       setLoadingFirewall(false);
-    }
-  };
-
-  const handleEnsureMangleRules = async () => {
-    if (isReadOnly) return;
-    setProvisioningMangle(true);
-    try {
-      const res = await authFetch('/api/mikrotik/unpaid-firewall/ensure', { method: 'POST' });
-      const data = await res.json();
-      if (data.success) {
-        showNotify('success', data.message || 'MikroTik Mangle & Drop rules are active.');
-      } else {
-        showNotify('error', data.error || 'Failed to install Mangle rules on RouterOS.');
-      }
-      await fetchUnpaidFirewallStatus();
-    } catch (err: any) {
-      showNotify('error', err.message || 'Failed to contact RouterOS.');
-    } finally {
-      setProvisioningMangle(false);
     }
   };
 
@@ -471,13 +451,13 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
   return (
     <div className="space-y-6">
       {/* Top System Resources Header */}
-      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden">
+      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-4 sm:p-6 text-white shadow-xl relative overflow-hidden">
         <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 opacity-10 pointer-events-none">
           <Router size={320} />
         </div>
 
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2">
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
+          <div className="space-y-2 min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span
                 className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wider uppercase flex items-center gap-1 border ${
@@ -504,16 +484,16 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
               </span>
             </div>
 
-            <h1 className="text-2xl font-bold tracking-tight flex items-center gap-3">
-              <Router className="text-indigo-400 w-7 h-7" />
-              <span>{resource?.identity || 'MikroTik RouterOS'}</span>
-              <span className="text-xs font-normal text-slate-400 bg-white/10 px-2.5 py-1 rounded-md">
+            <h1 className="text-lg sm:text-2xl font-bold tracking-tight flex flex-wrap items-center gap-2 sm:gap-3">
+              <Router className="text-indigo-400 w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
+              <span className="truncate">{resource?.identity || 'MikroTik RouterOS'}</span>
+              <span className="text-[11px] sm:text-xs font-normal text-slate-300 bg-white/10 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md">
                 {resource?.model || 'RouterOS Device'}
               </span>
             </h1>
 
-            <p className="text-xs text-slate-300 flex flex-wrap items-center gap-4">
-              <span>Host: <strong className="text-white font-mono">{config.useSsl ? 'https://' : 'http://'}{config.host}:{config.port}</strong></span>
+            <p className="text-xs text-slate-300 flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="break-all">Host: <strong className="text-white font-mono">{config.useSsl ? 'https://' : 'http://'}{config.host}:{config.port}</strong></span>
               <span>OS: <strong className="text-white">{resource?.version || 'v7.x'}</strong></span>
               <span>Uptime: <strong className="text-white">{resource?.uptime || 'N/A'}</strong></span>
             </p>
@@ -527,7 +507,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
                 fetchRouterIpAddresses();
               }}
               disabled={loading}
-              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs transition-all flex items-center gap-2 cursor-pointer"
+              className="w-full sm:w-auto justify-center px-4 py-2.5 sm:py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs transition-all flex items-center gap-2 cursor-pointer min-h-[40px] sm:min-h-[36px]"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               <span>Refresh Resources</span>
@@ -608,25 +588,25 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
         </div>
       )}
 
-      {/* Navigation Tabs */}
-      <div className="bg-white border border-slate-200 rounded-xl p-1.5 flex flex-wrap gap-1 shadow-sm">
+      {/* Navigation Tabs (Horizontally scrollable on mobile, wrapping on desktop) */}
+      <div className="bg-white border border-slate-200 rounded-xl p-1.5 flex items-center flex-nowrap sm:flex-wrap gap-1 shadow-sm overflow-x-auto no-scrollbar">
         <button
           onClick={() => setActiveTab('resources')}
-          className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
+          className={`px-3.5 sm:px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 shrink-0 whitespace-nowrap min-h-[38px] ${
             activeTab === 'resources' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
           }`}
         >
-          <Server className="w-4 h-4" />
-          <span>System Hardware Specs</span>
+          <Server className="w-4 h-4 shrink-0" />
+          <span>System Specs</span>
         </button>
 
         <button
           onClick={() => setActiveTab('leases')}
-          className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
+          className={`px-3.5 sm:px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 shrink-0 whitespace-nowrap min-h-[38px] ${
             activeTab === 'leases' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
           }`}
         >
-          <Wifi className="w-4 h-4" />
+          <Wifi className="w-4 h-4 shrink-0" />
           <span>DHCP Leases</span>
           {leasesMode === 'error' ? (
             <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200">
@@ -646,12 +626,12 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
             setActiveTab('firewall');
             fetchUnpaidFirewallStatus();
           }}
-          className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
+          className={`px-3.5 sm:px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 shrink-0 whitespace-nowrap min-h-[38px] ${
             activeTab === 'firewall' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
           }`}
         >
-          <Shield className="w-4 h-4" />
-          <span>Firewall &amp; UNPAID</span>
+          <Shield className="w-4 h-4 shrink-0" />
+          <span>UNPAID Address-List</span>
           {firewallStatus?.unpaidAddresses && firewallStatus.unpaidAddresses.length > 0 && (
             <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
               activeTab === 'firewall' ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-700'
@@ -663,28 +643,28 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
 
         <button
           onClick={() => setActiveTab('diagnostics')}
-          className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
+          className={`px-3.5 sm:px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 shrink-0 whitespace-nowrap min-h-[38px] ${
             activeTab === 'diagnostics' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
           }`}
         >
-          <Radio className="w-4 h-4" />
-          <span>IPoE Ping Diagnostics</span>
+          <Radio className="w-4 h-4 shrink-0" />
+          <span>Ping Diagnostics</span>
         </button>
 
         <button
           onClick={() => setActiveTab('settings')}
-          className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
+          className={`px-3.5 sm:px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 shrink-0 whitespace-nowrap min-h-[38px] ${
             activeTab === 'settings' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
           }`}
         >
-          <Settings className="w-4 h-4" />
+          <Settings className="w-4 h-4 shrink-0" />
           <span>Router Settings</span>
         </button>
       </div>
 
       {/* Tab 1: System Hardware Specs */}
       {activeTab === 'resources' && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 shadow-sm space-y-5 sm:space-y-6">
           <div className="pb-4 border-b border-slate-100">
             <h2 className="text-base font-bold text-slate-900">MikroTik Hardware & System Info</h2>
             <p className="text-xs text-slate-500">RouterOS hardware architecture, kernel version, and memory usage.</p>
@@ -1222,9 +1202,9 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
         });
 
         return (
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 shadow-sm space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
-              <div>
+              <div className="min-w-0">
                 <h2 className="text-base font-bold text-slate-900">RouterOS DHCP Server Leases (/ip/dhcp-server/lease)</h2>
                 <p className="text-xs text-slate-500">
                   Live leases queried directly from MikroTik RouterOS REST API alongside subscriber matching status.
@@ -1242,7 +1222,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
                     }
                   }}
                   disabled={isSyncingLeases}
-                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 shrink-0"
+                  className="w-full sm:w-auto justify-center px-3.5 py-2.5 sm:py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 shrink-0 min-h-[40px] sm:min-h-[34px]"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isSyncingLeases ? 'animate-spin' : ''}`} />
                   <span>{isSyncingLeases ? 'Syncing Leases...' : 'Sync Leases'}</span>
@@ -1264,7 +1244,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveTab('settings')}
-                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[11px] cursor-pointer shrink-0"
+                  className="w-full sm:w-auto px-3 py-2 sm:py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[11px] cursor-pointer shrink-0"
                 >
                   Open Router Settings
                 </button>
@@ -1272,7 +1252,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
             )}
 
             {/* Summary KPIs */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 sm:gap-3">
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
                 <p className="text-[10px] font-bold text-slate-400 uppercase">Total Leases</p>
                 <p className="text-lg font-extrabold text-slate-900 font-mono">{dhcpLeases.length}</p>
@@ -1297,24 +1277,24 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
 
             {/* Search and Filter Controls */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="relative flex-1 max-w-md">
+              <div className="relative flex-1 sm:max-w-md">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={leaseSearch}
                   onChange={(e) => setLeaseSearch(e.target.value)}
-                  placeholder="Search IP, MAC, host name, VLAN, interface, comment, or subscriber..."
-                  className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Search IP, MAC, host name, VLAN, interface, or subscriber..."
+                  className="w-full pl-8 pr-3 py-2.5 sm:py-2 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
-              <div className="flex flex-wrap items-center gap-1.5">
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 sm:pb-0">
                 {(['all', 'bound', 'waiting', 'unmatched'] as const).map((f) => (
                   <button
                     key={f}
                     type="button"
                     onClick={() => setLeaseFilter(f)}
-                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors cursor-pointer ${
+                    className={`px-3 py-2 sm:py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors cursor-pointer shrink-0 ${
                       leaseFilter === f
                         ? 'bg-indigo-600 text-white'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -1326,8 +1306,79 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
               </div>
             </div>
 
-            {/* Leases Table */}
-            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            {/* Mobile Leases Cards View */}
+            <div className="block md:hidden border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+              {filteredLeases.length === 0 ? (
+                <div className="py-10 px-4 text-center text-slate-400 text-xs">
+                  <Wifi className="w-7 h-7 mx-auto mb-2 opacity-40" />
+                  <p className="font-semibold text-slate-600">
+                    {leasesMode === 'error'
+                      ? 'RouterOS offline — fix Router Settings and click Sync Leases.'
+                      : 'No DHCP leases match the current filter.'}
+                  </p>
+                </div>
+              ) : (
+                filteredLeases.map((lease, idx) => {
+                  const matchedSubs = leaseSubscribersMap.get(getLeaseKey(lease, idx)) || [];
+                  return (
+                    <div key={getLeaseKey(lease, idx)} className="p-3.5 space-y-2 bg-white">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-mono font-bold text-sm text-slate-900">{lease.address || '—'}</div>
+                          <div className="text-xs font-medium text-slate-700 truncate">{lease.hostName || 'Unnamed Device'}</div>
+                          <div className="font-mono text-[11px] text-slate-500 mt-0.5">{lease.macAddress || '—'}</div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            lease.status === 'bound'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-amber-50 text-amber-700 border border-amber-200'
+                          }`}>
+                            {lease.status || 'waiting'} ({lease.dynamic === false ? 'S' : 'D'})
+                          </span>
+                          {lease.vlanId && (
+                            <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded text-[10px] font-bold font-mono">
+                              VLAN {lease.vlanId}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-100 text-[11px]">
+                        <span className="font-mono text-slate-500 truncate">
+                          {lease.interface || lease.server || '—'}
+                        </span>
+                        {matchedSubs.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {matchedSubs.map((s) => (
+                              <span
+                                key={s.id}
+                                className="px-2 py-0.5 bg-cyan-50 text-cyan-800 border border-cyan-200 rounded text-[11px] font-semibold"
+                              >
+                                #{s.id} {displayName(s)}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 italic">Unmatched</span>
+                        )}
+                      </div>
+
+                      {(lease.comment || lease.lastSeen || lease.expiresAfter) && (
+                        <div className="text-[10px] text-slate-400 font-mono flex flex-wrap gap-x-2 gap-y-0.5">
+                          {lease.comment && <span className="text-slate-600 font-sans">{lease.comment}</span>}
+                          {lease.lastSeen && <span>Seen {lease.lastSeen}</span>}
+                          {lease.expiresAfter && <span>Exp {lease.expiresAfter}</span>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Desktop Leases Table */}
+            <div className="hidden md:block overflow-x-auto border border-slate-200 rounded-xl">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
@@ -1430,37 +1481,26 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
         );
       })()}
 
-      {/* Tab 3: Firewall Mangle Rule & UNPAID Address-List */}
+      {/* Tab 3: UNPAID Address-List (For Custom Router Firewall Rules) */}
       {activeTab === 'firewall' && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 shadow-sm space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
             <div>
-              <h2 className="text-base font-bold text-slate-900">Firewall Mangle &amp; UNPAID Address-List Enforcement</h2>
+              <h2 className="text-base font-bold text-slate-900">UNPAID Firewall Address-List (/ip/firewall/address-list)</h2>
               <p className="text-xs text-slate-500">
-                Blocks internet for overdue subscribers using MikroTik <code className="font-mono">/ip/firewall/address-list (UNPAID)</code> and <code className="font-mono">/ip/firewall/mangle</code> while keeping subscriber VLAN interfaces online.
+                Adds or removes overdue subscriber IPs in address-list <code className="font-mono font-semibold text-slate-700">UNPAID</code> for your custom RouterOS firewall rules while keeping VLAN interfaces online.
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
                 onClick={fetchUnpaidFirewallStatus}
                 disabled={loadingFirewall}
-                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                className="w-full sm:w-auto justify-center px-3.5 py-2.5 sm:py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 min-h-[40px] sm:min-h-[34px] shadow-xs"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${loadingFirewall ? 'animate-spin' : ''}`} />
-                <span>Refresh Status</span>
+                <span>Refresh UNPAID List</span>
               </button>
-              {!isReadOnly && (
-                <button
-                  type="button"
-                  onClick={handleEnsureMangleRules}
-                  disabled={provisioningMangle}
-                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50"
-                >
-                  {provisioningMangle ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-                  <span>{provisioningMangle ? 'Applying Rules...' : 'Install / Verify Mangle Block Rules'}</span>
-                </button>
-              )}
             </div>
           </div>
 
@@ -1469,7 +1509,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
               <div className="flex items-start gap-2.5">
                 <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-bold">RouterOS Firewall Query Failed</p>
+                  <p className="font-bold">RouterOS Address-List Query Failed</p>
                   <p className="text-[11px] text-rose-800 mt-0.5">
                     {firewallStatus.error || 'Could not reach RouterOS REST API.'} Showing locally cached UNPAID entries if any.
                   </p>
@@ -1478,80 +1518,77 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTab('settings')}
-                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[11px] cursor-pointer shrink-0"
+                className="w-full sm:w-auto px-3 py-2 sm:py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[11px] cursor-pointer shrink-0"
               >
                 Router Settings
               </button>
             </div>
           )}
 
-          {/* Mangle & Forward Drop Rule Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Mangle Rule */}
-            <div className={`p-4 rounded-xl border space-y-2 ${
-              firewallStatus?.mangleRuleActive
-                ? 'bg-emerald-50/50 border-emerald-200'
-                : 'bg-amber-50/60 border-amber-200'
-            }`}>
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-800">1. Mangle Packet-Mark Rule</span>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                  firewallStatus?.mangleRuleActive
-                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                    : 'bg-amber-100 text-amber-800 border border-amber-300'
-                }`}>
-                  {firewallStatus?.mangleRuleActive ? 'Active on RouterOS' : 'Not Installed / Disabled'}
-                </span>
-              </div>
-              <div className="text-[11px] font-mono bg-white/90 border border-slate-200 rounded-lg p-2.5 text-slate-700 space-y-0.5">
-                <div><span className="text-slate-400">chain=</span>prerouting <span className="text-slate-400">src-address-list=</span><strong>UNPAID</strong></div>
-                <div><span className="text-slate-400">dst-address-type=</span>!local <span className="text-slate-400">action=</span>mark-packet</div>
-                <div><span className="text-slate-400">new-packet-mark=</span><strong>UNPAID_INTERNET_BLOCK</strong> <span className="text-slate-400">passthrough=</span>no</div>
-              </div>
-              {firewallStatus?.mangleRule && (
-                <p className="text-[11px] text-slate-600 font-mono">
-                  Matched Packets: <strong>{firewallStatus.mangleRule.packets?.toLocaleString() ?? 0}</strong> ({Math.round((firewallStatus.mangleRule.bytes ?? 0) / 1024).toLocaleString()} KB)
-                </p>
-              )}
-            </div>
-
-            {/* Forward Drop Rule */}
-            <div className={`p-4 rounded-xl border space-y-2 ${
-              firewallStatus?.dropRuleActive
-                ? 'bg-emerald-50/50 border-emerald-200'
-                : 'bg-amber-50/60 border-amber-200'
-            }`}>
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-800">2. Filter Forward Drop Rule</span>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                  firewallStatus?.dropRuleActive
-                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                    : 'bg-amber-100 text-amber-800 border border-amber-300'
-                }`}>
-                  {firewallStatus?.dropRuleActive ? 'Active (Top of Forward)' : 'Not Installed / Disabled'}
-                </span>
-              </div>
-              <div className="text-[11px] font-mono bg-white/90 border border-slate-200 rounded-lg p-2.5 text-slate-700 space-y-0.5">
-                <div><span className="text-slate-400">chain=</span>forward <span className="text-slate-400">packet-mark=</span><strong>UNPAID_INTERNET_BLOCK</strong></div>
-                <div><span className="text-slate-400">action=</span><strong className="text-rose-700">drop</strong></div>
-                <div className="text-[10px] text-slate-500 font-sans pt-0.5">Placed above FastTrack / Accept Established rules so blocking takes effect immediately.</div>
-              </div>
-              {firewallStatus?.dropRule && (
-                <p className="text-[11px] text-slate-600 font-mono">
-                  Dropped Packets: <strong>{firewallStatus.dropRule.packets?.toLocaleString() ?? 0}</strong> ({Math.round((firewallStatus.dropRule.bytes ?? 0) / 1024).toLocaleString()} KB)
-                </p>
-              )}
+          <div className="p-3.5 sm:p-4 rounded-xl bg-slate-50 border border-slate-200 flex items-start gap-2.5 text-xs text-slate-600">
+            <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-slate-800">Custom Firewall Rule Mode (Address-List Only)</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                This system never creates or modifies your MikroTik <code className="font-mono">/ip/firewall/mangle</code> or <code className="font-mono">/ip/firewall/filter</code> rules. It only adds and removes IPs in address-list <strong className="text-slate-700">UNPAID</strong> so your own RouterOS firewall rules control blocking.
+              </p>
             </div>
           </div>
 
-          {/* UNPAID Address-List Table */}
-          <div className="space-y-2">
+          {/* UNPAID Address-List Entries */}
+          <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
                 Active &ldquo;UNPAID&rdquo; Address-List Entries ({firewallStatus?.unpaidAddresses?.length ?? 0})
               </h3>
             </div>
-            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+
+            {/* Mobile Cards View */}
+            <div className="block md:hidden border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+              {!firewallStatus || firewallStatus.unpaidAddresses.length === 0 ? (
+                <div className="py-8 px-4 text-center text-slate-400 text-xs">
+                  <ShieldCheck className="w-7 h-7 mx-auto mb-1.5 text-emerald-500 opacity-70" />
+                  <p className="font-semibold text-slate-600">No IP addresses currently in address-list UNPAID</p>
+                </div>
+              ) : (
+                firewallStatus.unpaidAddresses.map((entry, idx) => (
+                  <div key={entry.id || `${entry.address}-${idx}`} className="p-3.5 space-y-2.5 bg-white">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-xs text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                            {entry.list}
+                          </span>
+                          <span className="font-mono font-bold text-sm text-slate-900 break-all">{entry.address}</span>
+                        </div>
+                        <p className="text-xs text-slate-600 mt-1">{entry.comment || '—'}</p>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0 ${
+                        entry.disabled
+                          ? 'bg-slate-100 text-slate-500 border border-slate-200'
+                          : 'bg-rose-50 text-rose-700 border border-rose-200'
+                      }`}>
+                        {entry.disabled ? 'Disabled' : 'In UNPAID'}
+                      </span>
+                    </div>
+
+                    {!isReadOnly && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveUnpaidEntry(entry)}
+                        disabled={removingEntryId === (entry.id || entry.address)}
+                        className="w-full py-2 px-3 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold cursor-pointer disabled:opacity-50"
+                      >
+                        {removingEntryId === (entry.id || entry.address) ? 'Removing...' : 'Remove / Restore Internet'}
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Desktop Table */}
+            <div className="hidden md:block overflow-x-auto border border-slate-200 rounded-xl">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
@@ -1582,7 +1619,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
                               ? 'bg-slate-100 text-slate-500 border border-slate-200'
                               : 'bg-rose-50 text-rose-700 border border-rose-200'
                           }`}>
-                            {entry.disabled ? 'Disabled' : 'Blocked'}
+                            {entry.disabled ? 'Disabled' : 'In UNPAID'}
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-right">
@@ -1609,7 +1646,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
 
       {/* Tab 3: Router Connection Settings */}
       {activeTab === 'settings' && (
-        <form onSubmit={handleSaveConfig} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
+        <form onSubmit={handleSaveConfig} className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 shadow-sm space-y-6">
           <div className="pb-4 border-b border-slate-100">
             <h2 className="text-base font-bold text-slate-900">MikroTik RouterOS Connection Settings</h2>
             <p className="text-xs text-slate-500">
@@ -1869,7 +1906,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Automatically checks subscriber dues, adds overdue subscribers to MikroTik firewall address-list <strong className="text-slate-700">UNPAID</strong>, and enforces the <strong className="text-slate-700">Mangle Block Rule</strong> while keeping VLAN interfaces enabled.
+                    Automatically checks subscriber dues and adds overdue subscribers to MikroTik firewall address-list <strong className="text-slate-700">UNPAID</strong> for your custom RouterOS firewall rules while keeping VLAN interfaces enabled.
                   </p>
                 </div>
 
@@ -1992,7 +2029,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
               <button
                 type="submit"
                 disabled={loading}
-                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-all shadow-md cursor-pointer flex items-center gap-2"
+                className="w-full sm:w-auto justify-center px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-all shadow-md cursor-pointer flex items-center gap-2 min-h-[42px] sm:min-h-[38px]"
               >
                 <Check className="w-4 h-4" />
                 <span>Save Router Settings</span>

@@ -12,7 +12,11 @@
   }
 }
 
-html {
+html,
+body {
   -webkit-tap-highlight-color: transparent;
   scroll-behavior: smooth;
+  overflow-x: clip;
+  max-width: 100%;
 }
+

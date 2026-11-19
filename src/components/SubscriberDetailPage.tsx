@@ -652,7 +652,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
     }
   };
 
-  // Toggle Subscriber Internet Suspension (MikroTik address-list UNPAID + Mangle Rule)
+  // Toggle Subscriber Internet Suspension (MikroTik address-list UNPAID)
   const handleToggleSuspension = async (suspend: boolean) => {
     if (isReadOnly || !subscriber) return;
 
@@ -668,7 +668,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
       if (data.success) {
         setIsSuspended(suspend);
         setSuspensionMsg({
-          text: data.message || `Subscriber is now ${suspend ? 'SUSPENDED (UNPAID + Mangle rule)' : 'RESTORED (Removed from UNPAID)'}.`,
+          text: data.message || `Subscriber is now ${suspend ? 'SUSPENDED (Added to UNPAID address-list)' : 'RESTORED (Removed from UNPAID address-list)'}.`,
           isError: false,
         });
       } else {
@@ -1639,7 +1639,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                   )}
                 </div>
                 <p className="text-[10px] text-slate-400">
-                  Suspension adds subscriber IP to MikroTik address-list <strong className="text-slate-200">UNPAID</strong> and blocks internet via Firewall Mangle rule (<strong className="text-slate-200">UNPAID_INTERNET_BLOCK</strong>) while keeping the VLAN online.
+                  Suspension adds subscriber IP to MikroTik address-list <strong className="text-slate-200">UNPAID</strong> for your custom router firewall rule while keeping the VLAN online.
                 </p>
               </div>
 
@@ -2345,11 +2345,11 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900">Suspend Internet for {nameStr}?</h3>
-                <p className="text-xs text-slate-500 mt-0.5">MikroTik Address-List (UNPAID) + Firewall Mangle Rule</p>
+                <p className="text-xs text-slate-500 mt-0.5">MikroTik Firewall Address-List (UNPAID)</p>
               </div>
             </div>
             <p className="text-xs font-medium text-slate-600 leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-              Suspending adds the subscriber&apos;s IP/subnet to the MikroTik address-list <strong className="text-rose-600">UNPAID</strong> and blocks internet traffic via the RouterOS <strong className="text-slate-800">Mangle + Forward Drop rule</strong> (<code className="font-mono text-[11px]">UNPAID_INTERNET_BLOCK</code>). Their VLAN interface stays <strong className="text-emerald-700">ONLINE</strong> for management and ARP-Ping.
+              Suspending adds the subscriber&apos;s IP/subnet to the MikroTik address-list <strong className="text-rose-600">UNPAID</strong> so your existing custom RouterOS firewall rules handle blocking. Their VLAN interface stays <strong className="text-emerald-700">ONLINE</strong> for management and ARP-Ping.
             </p>
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
