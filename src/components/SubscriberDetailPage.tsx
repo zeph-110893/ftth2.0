@@ -844,12 +844,12 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
 
   return (
     <div className="space-y-6 animate-in fade-in duration-150">
-      {/* Top Navigation & Breadcrumb Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-slate-200">
-        <div className="flex items-center gap-3">
+      {/* Top Navigation & Primary Action Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
+        <div className="flex items-center gap-3 min-w-0">
           <button
             onClick={onBack}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 active:bg-slate-200 border border-slate-200 shadow-2xs transition-all cursor-pointer group"
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 active:bg-slate-200 border border-slate-200 shadow-2xs transition-all cursor-pointer group shrink-0 min-h-[38px]"
             title="Return to list"
           >
             <ArrowLeft className="w-4 h-4 text-slate-500 group-hover:-translate-x-0.5 transition-transform" />
@@ -857,29 +857,56 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
           </button>
 
           {/* Breadcrumb */}
-          <nav className="hidden sm:flex items-center gap-1.5 text-xs text-slate-400 font-medium">
-            <span className="hover:text-slate-600 cursor-pointer" onClick={onBack}>
+          <nav className="hidden md:flex items-center gap-1.5 text-xs text-slate-400 font-medium min-w-0">
+            <span className="hover:text-slate-600 cursor-pointer shrink-0" onClick={onBack}>
               Subscribers
             </span>
-            <ChevronRight className="w-3.5 h-3.5 text-slate-300" />
-            <span className="text-slate-900 font-bold font-mono">#{subscriber.id}</span>
-            <ChevronRight className="w-3.5 h-3.5 text-slate-300" />
-            <span className="text-slate-800 font-semibold">{nameStr}</span>
+            <ChevronRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+            <span className="text-slate-900 font-bold font-mono shrink-0">#{subscriber.id}</span>
+            <ChevronRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+            <span className="text-slate-800 font-semibold truncate">{nameStr}</span>
           </nav>
         </div>
 
-        {/* Right side page actions: Delete account */}
-        <div className="flex items-center gap-2 ml-auto">
-          {!isReadOnly && (
+        {/* Right side quick actions: Suspend/Restore Internet + Delete */}
+        {!isReadOnly && (
+          <div className="flex items-center gap-2 w-full sm:w-auto sm:justify-end">
             <button
+              type="button"
+              disabled={isTogglingSuspension}
+              onClick={() => {
+                if (isSuspended) {
+                  handleToggleSuspension(false);
+                } else {
+                  setShowSuspendConfirm(true);
+                }
+              }}
+              className={`flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs min-h-[38px] ${
+                isSuspended
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                  : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200'
+              }`}
+              title={isSuspended ? 'Remove from UNPAID address-list' : 'Add to UNPAID address-list'}
+            >
+              {isTogglingSuspension ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Power className="w-3.5 h-3.5" />
+              )}
+              <span>{isSuspended ? 'Restore Internet' : 'Suspend Internet'}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setShowDeleteSubConfirm(true)}
-              className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 transition-colors cursor-pointer"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-rose-700 bg-white hover:bg-rose-50 border border-slate-200 hover:border-rose-200 transition-colors cursor-pointer shrink-0 min-h-[38px]"
               title="Delete subscriber account"
             >
-              <Trash2 className="w-4 h-4" />
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete</span>
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Read-Only Notice Banner if user has R permission */}
@@ -895,15 +922,15 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
 
       {/* Page Hero Header Banner */}
       <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 shadow-xs">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6">
-          <div className="flex items-start gap-3 sm:gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+          <div className="flex items-start gap-3.5 min-w-0 flex-1">
             <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-linear-to-br from-cyan-600 to-sky-700 text-white flex items-center justify-center font-bold text-lg sm:text-xl shadow-md shrink-0">
               {subscriber.first?.[0] || subscriber.last?.[0] || 'S'}
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <div className="min-w-0 flex-1 space-y-2.5">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
                 <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight truncate">{nameStr}</h1>
-                <span className="text-xs font-bold font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 shrink-0">
+                <span className="text-xs font-bold font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 shrink-0">
                   ID #{subscriber.id}
                 </span>
 
@@ -939,62 +966,47 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                 )}
               </div>
 
-              {/* Subtitle with VLAN and Due Date info */}
-              <div className="flex flex-wrap items-center gap-2 sm:gap-x-3 sm:gap-y-1.5 mt-2.5 text-xs text-slate-500">
-                <div className="inline-flex items-center gap-1.5 bg-slate-50 sm:bg-transparent px-2.5 py-1 sm:p-0 rounded-lg border border-slate-200 sm:border-0">
-                  <span className="font-semibold text-slate-400 uppercase tracking-wider text-[10px] sm:text-[11px]">VLAN:</span>
-                  {subscriber.vlan ? (
-                    <span className="px-2 py-0.5 rounded text-xs font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono">
-                      VLAN-{subscriber.vlan}
-                    </span>
-                  ) : (
-                    <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
-                      Unassigned
-                    </span>
-                  )}
-                  {isSuspended ? (
-                    <span
-                      className="px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1.5 bg-rose-50 text-rose-700 border border-rose-200"
-                      title="Subscriber IP is in MikroTik firewall address-list 'UNPAID' (Internet Suspended)"
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                      <span>SUSPENDED (UNPAID)</span>
-                    </span>
-                  ) : (
-                    <span
-                      className="px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200"
-                      title="Internet access is active"
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      <span>ONLINE / ACTIVE</span>
-                    </span>
-                  )}
-                </div>
+              {/* Clean Metadata Grid */}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="font-semibold text-slate-400 text-[10px] uppercase">VLAN</span>
+                  <span className="font-mono font-bold text-indigo-700">
+                    {subscriber.vlan ? `VLAN-${subscriber.vlan}` : 'Unassigned'}
+                  </span>
+                </span>
 
-                <div className="hidden sm:block text-slate-300">&bull;</div>
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${
+                    isSuspended
+                      ? 'bg-rose-50 text-rose-700 border-rose-200'
+                      : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  }`}
+                  title={isSuspended ? "IP is in MikroTik address-list 'UNPAID'" : 'Internet access is active'}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${isSuspended ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'}`} />
+                  <span>{isSuspended ? 'Suspended (UNPAID)' : 'Internet Active'}</span>
+                </span>
 
-                <div className="inline-flex items-center gap-1.5 bg-slate-50 sm:bg-transparent px-2.5 py-1 sm:p-0 rounded-lg border border-slate-200 sm:border-0">
-                  <span className="font-semibold text-slate-400 uppercase tracking-wider text-[10px] sm:text-[11px]">Billing:</span>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="font-semibold text-slate-400 text-[10px] uppercase">Due</span>
                   <span className="font-mono font-bold text-slate-800">{dueDateDisplay}</span>
-                </div>
+                </span>
 
-                <div className="hidden sm:block text-slate-300">&bull;</div>
-
-                <div className="inline-flex items-center gap-1.5 bg-slate-50 sm:bg-transparent px-2.5 py-1 sm:p-0 rounded-lg border border-slate-200 sm:border-0">
-                  <span className="font-semibold text-slate-400 uppercase tracking-wider text-[10px] sm:text-[11px]">Plan:</span>
-                  <span className="font-mono font-bold text-emerald-700">{formatCurrency(subscriber.rate)} / mo</span>
-                </div>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="font-semibold text-slate-400 text-[10px] uppercase">Plan</span>
+                  <span className="font-mono font-bold text-emerald-700">{formatCurrency(subscriber.rate)}/mo</span>
+                </span>
               </div>
             </div>
           </div>
 
           {/* Quick Financial Summary Badges */}
-          <div className="grid grid-cols-2 sm:flex items-center gap-2 sm:gap-3 w-full lg:w-auto">
-            <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 sm:px-4 py-2 sm:py-2.5 text-center min-w-0 sm:min-w-[120px]">
+          <div className="grid grid-cols-2 sm:flex items-center gap-2.5 w-full lg:w-auto shrink-0">
+            <div className="bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-center min-w-0 sm:min-w-[130px]">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Paid</span>
-              <span className="text-xs sm:text-sm font-black font-mono text-emerald-600 truncate block">{formatCurrency(totalPaidAmount)}</span>
+              <span className="text-sm font-black font-mono text-emerald-600 truncate block">{formatCurrency(totalPaidAmount)}</span>
             </div>
-            <div className={`rounded-xl px-3 sm:px-4 py-2 sm:py-2.5 text-center min-w-0 sm:min-w-[120px] border ${
+            <div className={`rounded-xl px-3.5 py-2.5 text-center min-w-0 sm:min-w-[130px] border ${
               subscriber.status === 'Inactive'
                 ? 'bg-slate-100/80 border-slate-200 text-slate-600'
                 : subscriber.status === 'Exclude'
@@ -1006,7 +1018,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
               <span className="text-[10px] font-bold uppercase tracking-wider block opacity-75 truncate">
                 {subscriber.status === 'Inactive' ? 'Account Status' : subscriber.status === 'Exclude' ? 'Account Status' : unpaidMonths.length > 0 ? 'Unpaid Balance' : 'Account Balance'}
               </span>
-              <span className="text-xs sm:text-sm font-black font-mono truncate block">
+              <span className="text-sm font-black font-mono truncate block">
                 {subscriber.status === 'Inactive'
                   ? 'Inactive'
                   : subscriber.status === 'Exclude'
@@ -1402,35 +1414,45 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
           </div>
 
           {/* Card: MikroTik RouterOS & VLAN Controls */}
-          <div className="bg-slate-900 text-slate-100 rounded-2xl border border-slate-800 shadow-md p-5 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+          <div className="bg-slate-900 text-slate-100 rounded-2xl border border-slate-800 shadow-md p-4 sm:p-5 space-y-4">
+            {/* Header */}
+            <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shrink-0">
                   <Network className="w-5 h-5" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">VLAN Interface Mapping</h3>
-                    {subscriber.vlan ? (
-                      <span className="px-2 py-0.5 rounded text-[11px] font-extrabold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono">
-                        VLAN-{subscriber.vlan}
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
-                        Unassigned
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[11px] text-slate-400 font-mono mt-0.5">
-                    {subscriber.vlan
-                      ? `Subnet: 172.16.${subscriber.vlan}.0/24 ${matchedIface?.name ? `• ${matchedIface.name}` : ''} ${
-                          matchedIface && (matchedIface.rxByte || matchedIface.txByte)
-                            ? `(↓ DL: ${formatBytes(matchedIface.txByte)} | ↑ UL: ${formatBytes(matchedIface.rxByte)})`
-                            : ''
-                        }`
-                      : 'No RouterOS VLAN mapped to this subscriber.'}
-                  </div>
+                <div className="min-w-0">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">RouterOS &amp; VLAN Control</h3>
+                  <p className="text-[11px] text-slate-400 truncate">VLAN mapping and UNPAID address-list access</p>
                 </div>
+              </div>
+              {subscriber.vlan ? (
+                <span className="px-2.5 py-1 rounded-lg text-[11px] font-extrabold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono shrink-0">
+                  VLAN-{subscriber.vlan}
+                </span>
+              ) : (
+                <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700 shrink-0">
+                  Unassigned
+                </span>
+              )}
+            </div>
+
+            {/* Panel 1: VLAN Mapping Details + Clean Action Button */}
+            <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-3.5 space-y-3">
+              <div className="space-y-1">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Interface &amp; Subnet
+                </div>
+                <div className="text-xs text-slate-200 font-mono break-words">
+                  {subscriber.vlan
+                    ? `172.16.${subscriber.vlan}.0/24${matchedIface?.name ? ` · ${matchedIface.name}` : ''}`
+                    : 'No RouterOS VLAN mapped to this subscriber.'}
+                </div>
+                {subscriber.vlan && matchedIface && (matchedIface.rxByte || matchedIface.txByte) ? (
+                  <div className="text-[11px] font-mono text-cyan-300/90">
+                    ↓ DL: {formatBytes(matchedIface.txByte)} &nbsp;|&nbsp; ↑ UL: {formatBytes(matchedIface.rxByte)}
+                  </div>
+                ) : null}
               </div>
 
               {!isReadOnly && !isEditingVlan && (
@@ -1443,14 +1465,14 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                     setIsEditingVlan(true);
                     setShowUnassignConfirm(false);
                   }}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                  className={`w-full inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer min-h-[38px] ${
                     subscriber.vlan
                       ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
                       : 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-xs'
                   }`}
                 >
                   <Edit2 className="w-3.5 h-3.5" />
-                  <span>{subscriber.vlan ? 'Change VLAN' : 'Assign VLAN'}</span>
+                  <span>{subscriber.vlan ? 'Change / Unassign VLAN' : 'Assign VLAN Interface'}</span>
                 </button>
               )}
             </div>
@@ -1615,56 +1637,47 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
               </div>
             )}
 
-            {/* RouterOS Internet Suspension Control via Address-List UNPAID */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-800">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                    Internet Access:
+            {/* Panel 2: RouterOS Internet Suspension Control via Address-List UNPAID */}
+            <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-3.5 space-y-3">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Internet Access (Address-List UNPAID)
                   </span>
                   <span
-                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 border ${
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider inline-flex items-center gap-1.5 border ${
                       isSuspended
                         ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
                         : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                     }`}
                   >
                     <span className={`w-1.5 h-1.5 rounded-full ${isSuspended ? 'bg-rose-400' : 'bg-emerald-400 animate-pulse'}`} />
-                    {isSuspended ? 'SUSPENDED (IN UNPAID LIST)' : 'ACTIVE (NORMAL ACCESS)'}
+                    {isSuspended ? 'SUSPENDED (UNPAID)' : 'ACTIVE'}
                   </span>
-                  {subscriber.vlan && (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                      VLAN {subscriber.vlan}: {isVlanEnabled ? 'ONLINE' : 'DISABLED'}
-                    </span>
-                  )}
                 </div>
-                <p className="text-[10px] text-slate-400">
-                  Suspension adds subscriber IP to MikroTik address-list <strong className="text-slate-200">UNPAID</strong> for your custom router firewall rule while keeping the VLAN online.
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Adds or removes this subscriber&apos;s IP in MikroTik address-list <strong className="text-slate-200">UNPAID</strong> for your custom firewall rule while keeping {subscriber.vlan ? `VLAN ${subscriber.vlan}` : 'VLAN'} <strong className="text-emerald-300">{isVlanEnabled ? 'ONLINE' : 'DISABLED'}</strong>.
                 </p>
               </div>
 
-              {/* Action Button */}
-              <div className="flex items-center gap-2 shrink-0">
+              {!isReadOnly && (
                 <button
                   type="button"
-                  disabled={isTogglingSuspension || isReadOnly}
+                  disabled={isTogglingSuspension}
                   onClick={() => {
-                    if (isReadOnly) return;
                     if (isSuspended) {
                       handleToggleSuspension(false);
                     } else {
                       setShowSuspendConfirm(true);
                     }
                   }}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-xs ${
+                  className={`w-full px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-xs min-h-[38px] ${
                     isSuspended
                       ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
                       : 'bg-rose-600 hover:bg-rose-500 text-white'
                   }`}
                   title={
-                    isReadOnly
-                      ? 'Read-only account permission'
-                      : isSuspended
+                    isSuspended
                       ? 'Restore internet (Remove from UNPAID address-list)'
                       : 'Suspend internet (Add to UNPAID address-list)'
                   }
@@ -1674,9 +1687,9 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                   ) : (
                     <Power className="w-3.5 h-3.5" />
                   )}
-                  <span>{isSuspended ? 'Restore Internet' : 'Suspend Internet'}</span>
+                  <span>{isSuspended ? 'Restore Internet (Remove from UNPAID)' : 'Suspend Internet (Add to UNPAID)'}</span>
                 </button>
-              </div>
+              )}
             </div>
 
             {/* Suspension status message */}
@@ -1704,76 +1717,78 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
         <div className={`space-y-6 lg:col-span-7 ${mobileTab === 'leases' || mobileTab === 'billing' || mobileTab === 'all' ? 'block' : 'hidden lg:block'}`}>
           {/* Card: DHCP Leases & Real-time Connectivity Diagnostics */}
           <div className={`bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden ${mobileTab === 'leases' || mobileTab === 'all' ? 'block' : 'hidden lg:block'}`}>
-            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Wifi className="w-4 h-4 text-cyan-600 shrink-0" />
-                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                  Connected DHCP Leases (VLAN {subscriber.vlan || 'N/A'})
-                </h2>
-                <span
-                  className={`px-2 py-0.5 rounded-full text-xs font-bold border ${
-                    boundLeases.length > 0
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                      : 'bg-slate-100 text-slate-600 border-slate-200'
-                  }`}
-                >
-                  {boundLeases.length} bound
-                </span>
-                {waitingLeases.length > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                    +{waitingLeases.length} waiting
-                  </span>
-                )}
-                {leasesMode === 'error' ? (
+            <div className="p-4 sm:p-5 border-b border-slate-100 space-y-3 bg-slate-50/50">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 flex-wrap min-w-0">
+                  <Wifi className="w-4 h-4 text-cyan-600 shrink-0" />
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                    Connected Devices (VLAN {subscriber.vlan || 'N/A'})
+                  </h2>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <span
-                    className="text-[10px] font-bold px-2 py-0.5 bg-rose-50 text-rose-800 border border-rose-200 rounded-full"
-                    title={leasesError || 'MikroTik RouterOS connection failed'}
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-bold border ${
+                      boundLeases.length > 0
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                    }`}
                   >
-                    Router Error
+                    {boundLeases.length} bound
                   </span>
-                ) : (
-                  <span className="text-[10px] font-bold px-2 py-0.5 bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-full">
-                    ARP-Ping
-                  </span>
-                )}
+                  {waitingLeases.length > 0 && (
+                    <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                      +{waitingLeases.length} waiting
+                    </span>
+                  )}
+                  {leasesMode === 'error' && (
+                    <span
+                      className="text-[10px] font-bold px-2 py-0.5 bg-rose-50 text-rose-800 border border-rose-200 rounded-full"
+                      title={leasesError || 'MikroTik RouterOS connection failed'}
+                    >
+                      Router Error
+                    </span>
+                  )}
+                </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                {onSyncLeases && (
-                  <button
-                    type="button"
-                    onClick={handleSyncSubscriberLeases}
-                    disabled={isSyncingLeases}
-                    className="flex-1 sm:flex-initial justify-center px-3 py-2 sm:py-1.5 rounded-xl text-xs font-bold bg-white hover:bg-cyan-50 text-cyan-700 border border-cyan-200 shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all min-h-[38px] sm:min-h-[34px]"
-                    title="Fetch newly connected DHCP lease devices from MikroTik RouterOS"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingLeases ? 'animate-spin' : ''}`} />
-                    <span>{isSyncingLeases ? 'Syncing...' : 'Sync Leases'}</span>
-                  </button>
-                )}
+              {(onSyncLeases || subLeases.length > 0) && (
+                <div className="grid grid-cols-2 sm:flex sm:items-center sm:justify-end gap-2">
+                  {onSyncLeases && (
+                    <button
+                      type="button"
+                      onClick={handleSyncSubscriberLeases}
+                      disabled={isSyncingLeases}
+                      className="justify-center px-3.5 py-2 sm:py-1.5 rounded-xl text-xs font-bold bg-white hover:bg-cyan-50 text-cyan-700 border border-cyan-200 shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all min-h-[38px] sm:min-h-[34px]"
+                      title="Fetch newly connected DHCP lease devices from MikroTik RouterOS"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncingLeases ? 'animate-spin' : ''}`} />
+                      <span>{isSyncingLeases ? 'Syncing...' : 'Sync Leases'}</span>
+                    </button>
+                  )}
 
-                {subLeases.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handlePingAllLeases}
-                    disabled={isPingingAll}
-                    className="flex-1 sm:flex-initial justify-center px-3.5 py-2 sm:py-1.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all min-h-[38px] sm:min-h-[34px]"
-                    title="Send Layer-2 ARP-Ping packets (bypasses client firewall ICMP blocks)"
-                  >
-                    {isPingingAll ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>ARP-Pinging...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Radio className="w-3.5 h-3.5" />
-                        <span>Verify ARP-Ping</span>
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
+                  {subLeases.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handlePingAllLeases}
+                      disabled={isPingingAll}
+                      className="justify-center px-3.5 py-2 sm:py-1.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-white shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all min-h-[38px] sm:min-h-[34px]"
+                      title="Send Layer-2 ARP-Ping packets (bypasses client firewall ICMP blocks)"
+                    >
+                      {isPingingAll ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>ARP-Pinging...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Radio className="w-3.5 h-3.5" />
+                          <span>Verify ARP-Ping</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Diagnostic Summary Bar */}
@@ -2039,20 +2054,36 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
             <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
               <div className="flex items-center gap-2 flex-wrap">
                 <CreditCard className="w-4 h-4 text-cyan-600 shrink-0" />
-                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700">Billing & Payment Records</h2>
-                <span className="text-xs text-slate-400 font-medium">
-                  ({unpaidMonths.length} unpaid, {metrics.entries.length} paid)
+                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700">Billing &amp; Payments</h2>
+                <span className="text-[11px] text-slate-500 font-medium bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                  {unpaidMonths.length} unpaid &middot; {metrics.entries.length} paid
                 </span>
               </div>
 
-              <div className="flex items-center gap-2">
+              {/* Clean Segmented Switch */}
+              <div className="grid grid-cols-2 sm:inline-flex p-1 bg-slate-200/70 rounded-xl w-full sm:w-auto">
                 <button
                   type="button"
-                  onClick={() => setShowHistory(!showHistory)}
-                  className="w-full sm:w-auto justify-center text-xs font-bold text-slate-700 hover:text-slate-900 px-3.5 py-2 sm:py-1.5 rounded-xl border border-slate-200 hover:bg-slate-100 bg-white transition-colors cursor-pointer flex items-center gap-1.5 min-h-[36px]"
+                  onClick={() => setShowHistory(false)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    !showHistory
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
                 >
-                  <History className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{showHistory ? 'View Due Months' : 'View Payment History'}</span>
+                  Due Months
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowHistory(true)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                    showHistory
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>History</span>
                 </button>
               </div>
             </div>
@@ -2060,28 +2091,30 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
             {/* Unpaid Months View */}
             {!showHistory && (
               <div className="p-4 sm:p-5 space-y-4">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Unpaid & Payable Months</span>
-                  <div className="flex items-center gap-3">
-                    {!isReadOnly && subscriber.status !== 'Inactive' && subscriber.status !== 'Exclude' && (
-                      <button
-                        type="button"
-                        onClick={handleAddAdvanceMonth}
-                        className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer flex items-center gap-1"
-                      >
-                        <span>+ Add Advance Month</span>
-                      </button>
-                    )}
-                    {allPayableMonths.length > 0 && !isReadOnly && (
-                      <button
-                        type="button"
-                        onClick={handleToggleSelectAll}
-                        className="text-xs font-semibold text-cyan-600 hover:underline cursor-pointer"
-                      >
-                        {selectedUnpaid.length === allPayableMonths.length ? 'Deselect All' : 'Select All'}
-                      </button>
-                    )}
-                  </div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Unpaid &amp; Payable Months</span>
+                  {!isReadOnly && (allPayableMonths.length > 0 || (subscriber.status !== 'Inactive' && subscriber.status !== 'Exclude')) && (
+                    <div className="flex items-center gap-2">
+                      {subscriber.status !== 'Inactive' && subscriber.status !== 'Exclude' && (
+                        <button
+                          type="button"
+                          onClick={handleAddAdvanceMonth}
+                          className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold transition-colors cursor-pointer"
+                        >
+                          + Advance Month
+                        </button>
+                      )}
+                      {allPayableMonths.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleToggleSelectAll}
+                          className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-xs font-bold transition-colors cursor-pointer"
+                        >
+                          {selectedUnpaid.length === allPayableMonths.length ? 'Deselect All' : 'Select All'}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {allPayableMonths.length === 0 ? (
