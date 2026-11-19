@@ -26,8 +26,10 @@ export class SqliteWrapper {
   }
 
   public save() {
-    const data = this.db.export();
-    fs.writeFileSync(this.dbPath, Buffer.from(data));
+    const data = Buffer.from(this.db.export());
+    const tmpPath = `${this.dbPath}.tmp`;
+    fs.writeFileSync(tmpPath, data);
+    fs.renameSync(tmpPath, this.dbPath);
   }
 
   public exec(sql: string) {
@@ -349,9 +351,10 @@ export async function replaceDatabase(fileBuffer: Buffer): Promise<SqliteWrapper
         if (u.password && !isHashed(u.password)) {
           wrapper.run('UPDATE users SET password = ? WHERE id = ?', [hashPassword(u.password), u.id]);
         }
-        if (!u.permission) {
-          const perm = (u.role === 'r' || u.role === 'viewer') ? 'R' : (u.role === 'rw' || u.role === 'editor') ? 'RW' : 'ADMIN';
-          wrapper.run('UPDATE users SET permission = ? WHERE id = ?', [perm, u.id]);
+        if (!u.permission || u.permission === 'RW' || u.permission === 'R') {
+          const perm = (u.role === 'admin' || u.permission === 'ADMIN') ? 'ADMIN' : 'OPERATOR';
+          const role = perm === 'ADMIN' ? 'admin' : 'operator';
+          wrapper.run('UPDATE users SET permission = ?, role = ? WHERE id = ?', [perm, role, u.id]);
         }
       }
     } catch (hashErr) {

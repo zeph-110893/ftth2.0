@@ -25,6 +25,9 @@ import {
   Trash2,
   Loader2,
   User,
+  Wifi,
+  Search,
+  Shield,
 } from 'lucide-react';
 import {
   MikroTikConfig,
@@ -32,10 +35,14 @@ import {
   MikroTikInterface,
   MikroTikIpAddress,
   MikroTikPingResult,
+  MikroTikDhcpLease,
+  MikroTikUnpaidFirewallStatus,
+  MikroTikAddressListEntry,
   Subscriber,
   AuthUser,
 } from '../types';
 import { authFetch, canWrite } from '../utils/auth';
+import { getLeasesForSubscriber, displayName } from '../utils/billingUtils';
 
 interface PingHistoryEntry extends MikroTikPingResult {
   id: string;
@@ -46,16 +53,37 @@ interface PingHistoryEntry extends MikroTikPingResult {
 interface MikroTikManagerProps {
   currentUser?: AuthUser | null;
   subscribers?: Subscriber[];
+  dhcpLeases?: MikroTikDhcpLease[];
+  leasesMode?: 'live' | 'error' | null;
+  leasesError?: string | null;
+  onSyncLeases?: () => Promise<{
+    success: boolean;
+    leases: MikroTikDhcpLease[];
+    mode: 'live' | 'error' | null;
+    error?: string;
+  }>;
+  isSyncingLeases?: boolean;
   onRefreshData?: () => void | Promise<void>;
 }
 
 export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
   currentUser,
   subscribers = [],
+  dhcpLeases = [],
+  leasesMode = null,
+  leasesError = null,
+  onSyncLeases,
+  isSyncingLeases = false,
   onRefreshData,
 }) => {
   const isReadOnly = !canWrite(currentUser);
-  const [activeTab, setActiveTab] = useState<'resources' | 'diagnostics' | 'settings'>('resources');
+  const [activeTab, setActiveTab] = useState<'resources' | 'leases' | 'firewall' | 'diagnostics' | 'settings'>('resources');
+  const [leaseSearch, setLeaseSearch] = useState('');
+  const [leaseFilter, setLeaseFilter] = useState<'all' | 'bound' | 'waiting' | 'unmatched'>('all');
+  const [firewallStatus, setFirewallStatus] = useState<MikroTikUnpaidFirewallStatus | null>(null);
+  const [loadingFirewall, setLoadingFirewall] = useState(false);
+  const [provisioningMangle, setProvisioningMangle] = useState(false);
+  const [removingEntryId, setRemovingEntryId] = useState<string | null>(null);
   
   const [config, setConfig] = useState<MikroTikConfig>({
     host: '172.16.0.1',
@@ -95,7 +123,65 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
     fetchSystemInfo();
     fetchInterfaces();
     fetchRouterIpAddresses();
+    fetchUnpaidFirewallStatus();
   }, []);
+
+  const fetchUnpaidFirewallStatus = async () => {
+    setLoadingFirewall(true);
+    try {
+      const res = await authFetch(`/api/mikrotik/unpaid-firewall?_t=${Date.now()}`, { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        setFirewallStatus(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch UNPAID firewall status:', err);
+    } finally {
+      setLoadingFirewall(false);
+    }
+  };
+
+  const handleEnsureMangleRules = async () => {
+    if (isReadOnly) return;
+    setProvisioningMangle(true);
+    try {
+      const res = await authFetch('/api/mikrotik/unpaid-firewall/ensure', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showNotify('success', data.message || 'MikroTik Mangle & Drop rules are active.');
+      } else {
+        showNotify('error', data.error || 'Failed to install Mangle rules on RouterOS.');
+      }
+      await fetchUnpaidFirewallStatus();
+    } catch (err: any) {
+      showNotify('error', err.message || 'Failed to contact RouterOS.');
+    } finally {
+      setProvisioningMangle(false);
+    }
+  };
+
+  const handleRemoveUnpaidEntry = async (entry: MikroTikAddressListEntry) => {
+    if (isReadOnly) return;
+    setRemovingEntryId(entry.id || entry.address);
+    try {
+      const res = await authFetch('/api/mikrotik/address-list/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entryId: entry.id, address: entry.address }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showNotify('success', `Removed ${entry.address} from address-list 'UNPAID'.`);
+      } else {
+        showNotify('error', data.error || `Failed to remove ${entry.address} from RouterOS.`);
+      }
+      await fetchUnpaidFirewallStatus();
+    } catch (err: any) {
+      showNotify('error', err.message || 'Failed to remove address-list entry.');
+    } finally {
+      setRemovingEntryId(null);
+    }
+  };
 
   const showNotify = (type: 'success' | 'error' | 'info', message: string) => {
     setNotification({ type, message });
@@ -532,6 +618,47 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
         >
           <Server className="w-4 h-4" />
           <span>System Hardware Specs</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('leases')}
+          className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
+            activeTab === 'leases' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Wifi className="w-4 h-4" />
+          <span>DHCP Leases</span>
+          {leasesMode === 'error' ? (
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200">
+              Error
+            </span>
+          ) : (
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              activeTab === 'leases' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
+            }`}>
+              {dhcpLeases.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('firewall');
+            fetchUnpaidFirewallStatus();
+          }}
+          className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
+            activeTab === 'firewall' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Shield className="w-4 h-4" />
+          <span>Firewall &amp; UNPAID</span>
+          {firewallStatus?.unpaidAddresses && firewallStatus.unpaidAddresses.length > 0 && (
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              activeTab === 'firewall' ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-700'
+            }`}>
+              {firewallStatus.unpaidAddresses.length}
+            </span>
+          )}
         </button>
 
         <button
@@ -1059,6 +1186,427 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
         </div>
       )}
 
+      {/* Tab 2: Live RouterOS DHCP Leases Inspector */}
+      {activeTab === 'leases' && (() => {
+        const leaseSubscribersMap = new Map<string, Subscriber[]>();
+        subscribers.forEach((sub) => {
+          const matched = getLeasesForSubscriber(sub, dhcpLeases);
+          matched.forEach((lease, idx) => {
+            const key = lease.id || `${lease.address}-${lease.macAddress}-${idx}`;
+            const existing = leaseSubscribersMap.get(key) || [];
+            existing.push(sub);
+            leaseSubscribersMap.set(key, existing);
+          });
+        });
+
+        const getLeaseKey = (lease: MikroTikDhcpLease, idx: number) =>
+          lease.id || `${lease.address}-${lease.macAddress}-${idx}`;
+
+        const boundCount = dhcpLeases.filter((l) => l.status === 'bound').length;
+        const waitingCount = dhcpLeases.length - boundCount;
+        const matchedCount = dhcpLeases.filter((l, idx) => (leaseSubscribersMap.get(getLeaseKey(l, idx)) || []).length > 0).length;
+        const unmatchedCount = dhcpLeases.length - matchedCount;
+
+        const filteredLeases = dhcpLeases.filter((l, idx) => {
+          const matchedSubs = leaseSubscribersMap.get(getLeaseKey(l, idx)) || [];
+          if (leaseFilter === 'bound' && l.status !== 'bound') return false;
+          if (leaseFilter === 'waiting' && l.status === 'bound') return false;
+          if (leaseFilter === 'unmatched' && matchedSubs.length > 0) return false;
+          if (leaseSearch.trim()) {
+            const q = leaseSearch.trim().toLowerCase();
+            const subNames = matchedSubs.map((s) => displayName(s).toLowerCase()).join(' ');
+            const hay = `${l.address} ${l.macAddress} ${l.hostName} ${l.server} ${l.interface || ''} ${l.comment || ''} ${l.vlanId ?? ''} ${subNames}`.toLowerCase();
+            if (!hay.includes(q)) return false;
+          }
+          return true;
+        });
+
+        return (
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">RouterOS DHCP Server Leases (/ip/dhcp-server/lease)</h2>
+                <p className="text-xs text-slate-500">
+                  Live leases queried directly from MikroTik RouterOS REST API alongside subscriber matching status.
+                </p>
+              </div>
+              {onSyncLeases && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const res = await onSyncLeases();
+                    if (res.success && res.mode !== 'error') {
+                      showNotify('success', `Synced ${res.leases.length} live DHCP lease(s) from RouterOS.`);
+                    } else {
+                      showNotify('error', res.error || 'Failed to sync DHCP leases from RouterOS.');
+                    }
+                  }}
+                  disabled={isSyncingLeases}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingLeases ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingLeases ? 'Syncing Leases...' : 'Sync Leases'}</span>
+                </button>
+              )}
+            </div>
+
+            {leasesMode === 'error' && (
+              <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold">Unable to fetch DHCP leases from MikroTik RouterOS</p>
+                    <p className="text-[11px] text-rose-800 mt-0.5">
+                      {leasesError || 'Connection to RouterOS REST API failed.'} Verify Host, Port (443 for www-ssl HTTPS or 80 for www HTTP), and credentials.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('settings')}
+                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[11px] cursor-pointer shrink-0"
+                >
+                  Open Router Settings
+                </button>
+              </div>
+            )}
+
+            {/* Summary KPIs */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Total Leases</p>
+                <p className="text-lg font-extrabold text-slate-900 font-mono">{dhcpLeases.length}</p>
+              </div>
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <p className="text-[10px] font-bold text-emerald-700 uppercase">Bound (Active)</p>
+                <p className="text-lg font-extrabold text-emerald-800 font-mono">{boundCount}</p>
+              </div>
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                <p className="text-[10px] font-bold text-amber-700 uppercase">Waiting</p>
+                <p className="text-lg font-extrabold text-amber-800 font-mono">{waitingCount}</p>
+              </div>
+              <div className="p-3 bg-cyan-50 border border-cyan-200 rounded-xl">
+                <p className="text-[10px] font-bold text-cyan-700 uppercase">Matched</p>
+                <p className="text-lg font-extrabold text-cyan-800 font-mono">{matchedCount}</p>
+              </div>
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl col-span-2 sm:col-span-1">
+                <p className="text-[10px] font-bold text-slate-500 uppercase">Unmatched</p>
+                <p className="text-lg font-extrabold text-slate-700 font-mono">{unmatchedCount}</p>
+              </div>
+            </div>
+
+            {/* Search and Filter Controls */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={leaseSearch}
+                  onChange={(e) => setLeaseSearch(e.target.value)}
+                  placeholder="Search IP, MAC, host name, VLAN, interface, comment, or subscriber..."
+                  className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(['all', 'bound', 'waiting', 'unmatched'] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setLeaseFilter(f)}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors cursor-pointer ${
+                      leaseFilter === f
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Leases Table */}
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    <th className="py-2.5 px-3">IP Address</th>
+                    <th className="py-2.5 px-3">MAC Address</th>
+                    <th className="py-2.5 px-3">Host Name</th>
+                    <th className="py-2.5 px-3">Server / Interface / VLAN</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3">Matched Subscriber</th>
+                    <th className="py-2.5 px-3">Comment / Seen</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs">
+                  {filteredLeases.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-10 text-center text-slate-400">
+                        <Wifi className="w-7 h-7 mx-auto mb-2 opacity-40" />
+                        <p className="font-semibold text-slate-600">
+                          {leasesMode === 'error'
+                            ? 'RouterOS offline — fix Router Settings and click Sync Leases.'
+                            : 'No DHCP leases match the current filter.'}
+                        </p>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredLeases.map((lease, idx) => {
+                      const matchedSubs = leaseSubscribersMap.get(getLeaseKey(lease, idx)) || [];
+                      return (
+                        <tr key={getLeaseKey(lease, idx)} className="hover:bg-slate-50/80">
+                          <td className="py-2.5 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">
+                            {lease.address || '—'}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600 whitespace-nowrap">
+                            {lease.macAddress || '—'}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-800 font-medium">
+                            {lease.hostName || '—'}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600">
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span>{lease.interface || lease.server || '—'}</span>
+                              {lease.server && lease.interface && lease.server !== lease.interface && (
+                                <span className="text-slate-400">({lease.server})</span>
+                              )}
+                              {lease.vlanId && (
+                                <span className="px-1.5 py-0.2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded text-[10px] font-bold">
+                                  VLAN {lease.vlanId}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 whitespace-nowrap">
+                            <div className="flex items-center gap-1">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                lease.status === 'bound'
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
+                              }`}>
+                                {lease.status || 'waiting'}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {lease.dynamic === false ? 'S' : 'D'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            {matchedSubs.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {matchedSubs.map((s) => (
+                                  <span
+                                    key={s.id}
+                                    className="px-2 py-0.5 bg-cyan-50 text-cyan-800 border border-cyan-200 rounded text-[11px] font-semibold"
+                                  >
+                                    #{s.id} {displayName(s)}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 italic text-[11px]">Unmatched</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-[11px] text-slate-500">
+                            <div>{lease.comment || '—'}</div>
+                            {(lease.lastSeen || lease.expiresAfter) && (
+                              <div className="text-[10px] font-mono text-slate-400">
+                                {lease.lastSeen ? `Seen ${lease.lastSeen}` : ''}
+                                {lease.lastSeen && lease.expiresAfter ? ' · ' : ''}
+                                {lease.expiresAfter ? `Exp ${lease.expiresAfter}` : ''}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Tab 3: Firewall Mangle Rule & UNPAID Address-List */}
+      {activeTab === 'firewall' && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+            <div>
+              <h2 className="text-base font-bold text-slate-900">Firewall Mangle &amp; UNPAID Address-List Enforcement</h2>
+              <p className="text-xs text-slate-500">
+                Blocks internet for overdue subscribers using MikroTik <code className="font-mono">/ip/firewall/address-list (UNPAID)</code> and <code className="font-mono">/ip/firewall/mangle</code> while keeping subscriber VLAN interfaces online.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={fetchUnpaidFirewallStatus}
+                disabled={loadingFirewall}
+                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingFirewall ? 'animate-spin' : ''}`} />
+                <span>Refresh Status</span>
+              </button>
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={handleEnsureMangleRules}
+                  disabled={provisioningMangle}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50"
+                >
+                  {provisioningMangle ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                  <span>{provisioningMangle ? 'Applying Rules...' : 'Install / Verify Mangle Block Rules'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {firewallStatus?.mode === 'error' && (
+            <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold">RouterOS Firewall Query Failed</p>
+                  <p className="text-[11px] text-rose-800 mt-0.5">
+                    {firewallStatus.error || 'Could not reach RouterOS REST API.'} Showing locally cached UNPAID entries if any.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('settings')}
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[11px] cursor-pointer shrink-0"
+              >
+                Router Settings
+              </button>
+            </div>
+          )}
+
+          {/* Mangle & Forward Drop Rule Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Mangle Rule */}
+            <div className={`p-4 rounded-xl border space-y-2 ${
+              firewallStatus?.mangleRuleActive
+                ? 'bg-emerald-50/50 border-emerald-200'
+                : 'bg-amber-50/60 border-amber-200'
+            }`}>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-800">1. Mangle Packet-Mark Rule</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                  firewallStatus?.mangleRuleActive
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    : 'bg-amber-100 text-amber-800 border border-amber-300'
+                }`}>
+                  {firewallStatus?.mangleRuleActive ? 'Active on RouterOS' : 'Not Installed / Disabled'}
+                </span>
+              </div>
+              <div className="text-[11px] font-mono bg-white/90 border border-slate-200 rounded-lg p-2.5 text-slate-700 space-y-0.5">
+                <div><span className="text-slate-400">chain=</span>prerouting <span className="text-slate-400">src-address-list=</span><strong>UNPAID</strong></div>
+                <div><span className="text-slate-400">dst-address-type=</span>!local <span className="text-slate-400">action=</span>mark-packet</div>
+                <div><span className="text-slate-400">new-packet-mark=</span><strong>UNPAID_INTERNET_BLOCK</strong> <span className="text-slate-400">passthrough=</span>no</div>
+              </div>
+              {firewallStatus?.mangleRule && (
+                <p className="text-[11px] text-slate-600 font-mono">
+                  Matched Packets: <strong>{firewallStatus.mangleRule.packets?.toLocaleString() ?? 0}</strong> ({Math.round((firewallStatus.mangleRule.bytes ?? 0) / 1024).toLocaleString()} KB)
+                </p>
+              )}
+            </div>
+
+            {/* Forward Drop Rule */}
+            <div className={`p-4 rounded-xl border space-y-2 ${
+              firewallStatus?.dropRuleActive
+                ? 'bg-emerald-50/50 border-emerald-200'
+                : 'bg-amber-50/60 border-amber-200'
+            }`}>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-800">2. Filter Forward Drop Rule</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                  firewallStatus?.dropRuleActive
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    : 'bg-amber-100 text-amber-800 border border-amber-300'
+                }`}>
+                  {firewallStatus?.dropRuleActive ? 'Active (Top of Forward)' : 'Not Installed / Disabled'}
+                </span>
+              </div>
+              <div className="text-[11px] font-mono bg-white/90 border border-slate-200 rounded-lg p-2.5 text-slate-700 space-y-0.5">
+                <div><span className="text-slate-400">chain=</span>forward <span className="text-slate-400">packet-mark=</span><strong>UNPAID_INTERNET_BLOCK</strong></div>
+                <div><span className="text-slate-400">action=</span><strong className="text-rose-700">drop</strong></div>
+                <div className="text-[10px] text-slate-500 font-sans pt-0.5">Placed above FastTrack / Accept Established rules so blocking takes effect immediately.</div>
+              </div>
+              {firewallStatus?.dropRule && (
+                <p className="text-[11px] text-slate-600 font-mono">
+                  Dropped Packets: <strong>{firewallStatus.dropRule.packets?.toLocaleString() ?? 0}</strong> ({Math.round((firewallStatus.dropRule.bytes ?? 0) / 1024).toLocaleString()} KB)
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* UNPAID Address-List Table */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                Active &ldquo;UNPAID&rdquo; Address-List Entries ({firewallStatus?.unpaidAddresses?.length ?? 0})
+              </h3>
+            </div>
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    <th className="py-2.5 px-3">List</th>
+                    <th className="py-2.5 px-3">Address / Subnet</th>
+                    <th className="py-2.5 px-3">Comment</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs">
+                  {!firewallStatus || firewallStatus.unpaidAddresses.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-slate-400">
+                        <ShieldCheck className="w-7 h-7 mx-auto mb-1.5 text-emerald-500 opacity-70" />
+                        <p className="font-semibold text-slate-600">No IP addresses currently in address-list UNPAID</p>
+                      </td>
+                    </tr>
+                  ) : (
+                    firewallStatus.unpaidAddresses.map((entry, idx) => (
+                      <tr key={entry.id || `${entry.address}-${idx}`} className="hover:bg-slate-50/80">
+                        <td className="py-2.5 px-3 font-mono font-bold text-rose-700">{entry.list}</td>
+                        <td className="py-2.5 px-3 font-mono font-bold text-slate-900">{entry.address}</td>
+                        <td className="py-2.5 px-3 text-slate-600">{entry.comment || '—'}</td>
+                        <td className="py-2.5 px-3">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            entry.disabled
+                              ? 'bg-slate-100 text-slate-500 border border-slate-200'
+                              : 'bg-rose-50 text-rose-700 border border-rose-200'
+                          }`}>
+                            {entry.disabled ? 'Disabled' : 'Blocked'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          {!isReadOnly && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveUnpaidEntry(entry)}
+                              disabled={removingEntryId === (entry.id || entry.address)}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                            >
+                              {removingEntryId === (entry.id || entry.address) ? 'Removing...' : 'Remove / Restore'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tab 3: Router Connection Settings */}
       {activeTab === 'settings' && (
         <form onSubmit={handleSaveConfig} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
@@ -1211,6 +1759,9 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
                   8728 (API Plain)
                 </button>
               </div>
+              <p className="text-[10px] text-slate-500 mt-1">
+                RouterOS v7 REST API runs on <strong>443</strong> (<code className="font-mono">www-ssl</code>) or <strong>80</strong> (<code className="font-mono">www</code>). Ports 8728/8729 are RouterOS binary API ports and do not serve REST requests.
+              </p>
             </div>
 
             <div>
@@ -1318,7 +1869,7 @@ export const MikroTikManager: React.FC<MikroTikManagerProps> = ({
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Automatically checks subscriber dues and adds overdue subscribers to the MikroTik firewall address list UNPAID when billing due dates expire.
+                    Automatically checks subscriber dues, adds overdue subscribers to MikroTik firewall address-list <strong className="text-slate-700">UNPAID</strong>, and enforces the <strong className="text-slate-700">Mangle Block Rule</strong> while keeping VLAN interfaces enabled.
                   </p>
                 </div>
 

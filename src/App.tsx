@@ -49,7 +49,8 @@ export default function App() {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [dhcpLeases, setDhcpLeases] = useState<MikroTikDhcpLease[]>([]);
-  const [leasesMode, setLeasesMode] = useState<'live' | 'fallback' | null>(null);
+  const [leasesMode, setLeasesMode] = useState<'live' | 'error' | null>(null);
+  const [leasesError, setLeasesError] = useState<string | null>(null);
   const [mikrotikInterfaces, setMikrotikInterfaces] = useState<MikroTikInterface[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastSyncedTime, setLastSyncedTime] = useState<Date>(new Date());
@@ -177,10 +178,19 @@ export default function App() {
 
       if (resLeases && resLeases.ok) {
         const leaseData = await resLeases.json();
-        if (leaseData.success) {
+        if (leaseData.success && leaseData.mode !== 'error') {
           setDhcpLeases(leaseData.leases || []);
-          setLeasesMode(leaseData.mode === 'fallback' ? 'fallback' : 'live');
+          setLeasesMode('live');
+          setLeasesError(null);
+        } else {
+          setDhcpLeases([]);
+          setLeasesMode('error');
+          setLeasesError(leaseData.error || 'Unable to connect to MikroTik RouterOS');
         }
+      } else if (resLeases) {
+        setDhcpLeases([]);
+        setLeasesMode('error');
+        setLeasesError(`HTTP ${resLeases.status} while querying RouterOS DHCP leases`);
       }
 
       if (resInterfaces && resInterfaces.ok) {
@@ -204,7 +214,7 @@ export default function App() {
   const syncDhcpLeases = async (): Promise<{
     success: boolean;
     leases: MikroTikDhcpLease[];
-    mode: 'live' | 'fallback' | null;
+    mode: 'live' | 'error' | null;
     error?: string;
   }> => {
     if (!currentUser && !getAuthToken()) {
@@ -227,41 +237,51 @@ export default function App() {
 
       if (!resLeases.ok) {
         const errBody = await resLeases.json().catch(() => ({}));
+        const errMsg = errBody.error || `HTTP ${resLeases.status}`;
+        setDhcpLeases([]);
+        setLeasesMode('error');
+        setLeasesError(errMsg);
         return {
           success: false,
-          leases: dhcpLeases,
-          mode: leasesMode,
-          error: errBody.error || `HTTP ${resLeases.status}`,
+          leases: [],
+          mode: 'error',
+          error: errMsg,
         };
       }
 
       const leaseData = await resLeases.json();
-      if (leaseData.success) {
+      if (leaseData.success && leaseData.mode !== 'error') {
         const nextLeases: MikroTikDhcpLease[] = leaseData.leases || [];
-        const nextMode: 'live' | 'fallback' = leaseData.mode === 'fallback' ? 'fallback' : 'live';
         setDhcpLeases(nextLeases);
-        setLeasesMode(nextMode);
+        setLeasesMode('live');
+        setLeasesError(null);
         setLastSyncedTime(new Date());
         return {
           success: true,
           leases: nextLeases,
-          mode: nextMode,
-          error: leaseData.error,
+          mode: 'live',
         };
       }
 
+      const errMsg = leaseData.error || 'Unable to connect to MikroTik RouterOS';
+      setDhcpLeases([]);
+      setLeasesMode('error');
+      setLeasesError(errMsg);
       return {
         success: false,
-        leases: dhcpLeases,
-        mode: leasesMode,
-        error: leaseData.error || 'Failed to sync DHCP leases',
+        leases: [],
+        mode: 'error',
+        error: errMsg,
       };
     } catch (err: any) {
+      const errMsg = err?.message || 'Network error while syncing DHCP leases';
+      setLeasesMode('error');
+      setLeasesError(errMsg);
       return {
         success: false,
         leases: dhcpLeases,
-        mode: leasesMode,
-        error: err?.message || 'Network error while syncing DHCP leases',
+        mode: 'error',
+        error: errMsg,
       };
     } finally {
       setIsSyncingLeases(false);
@@ -596,6 +616,7 @@ export default function App() {
             payments={payments}
             dhcpLeases={dhcpLeases}
             leasesMode={leasesMode}
+            leasesError={leasesError}
             mikrotikInterfaces={mikrotikInterfaces}
             currentUser={currentUser}
             previousTabName={currentTab}
@@ -616,6 +637,7 @@ export default function App() {
                 payments={payments}
                 dhcpLeases={dhcpLeases}
                 leasesMode={leasesMode}
+                leasesError={leasesError}
                 mikrotikInterfaces={mikrotikInterfaces}
                 currentUser={currentUser}
                 onSelectSubscriber={(sub) => handleSelectSubscriber(sub)}
@@ -623,6 +645,7 @@ export default function App() {
                 onRefreshData={fetchData}
                 onSyncLeases={syncDhcpLeases}
                 isSyncingLeases={isSyncingLeases}
+                onOpenMikroTik={isAdmin(currentUser) ? () => setCurrentTab('mikrotik') : undefined}
                 onAddPayment={handleSavePayment}
               />
             )}
@@ -665,6 +688,11 @@ export default function App() {
               <MikroTikManager
                 currentUser={currentUser}
                 subscribers={subscribers}
+                dhcpLeases={dhcpLeases}
+                leasesMode={leasesMode}
+                leasesError={leasesError}
+                onSyncLeases={syncDhcpLeases}
+                isSyncingLeases={isSyncingLeases}
                 onRefreshData={fetchData}
               />
             )}

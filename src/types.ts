@@ -114,6 +114,9 @@ export interface MikroTikDhcpLease {
   dynamic?: boolean;
   lastSeen?: string;
   expiresAfter?: string;
+  agentCircuitId?: string;
+  agentRemoteId?: string;
+  clientId?: string;
   comment?: string;
 }
 
@@ -124,6 +127,7 @@ export interface MikroTikAddressListEntry {
   comment?: string;
   disabled?: boolean;
   dynamic?: boolean;
+  creationTime?: string;
 }
 
 export interface MikroTikInterface {
@@ -165,6 +169,46 @@ export interface MikroTikPingResult {
   method?: 'arp-ping' | 'arp-cache' | 'icmp';
   macAddress?: string;
   interface?: string;
+}
+
+export interface MikroTikMangleRule {
+  id: string;
+  chain: string;
+  action: string;
+  srcAddressList?: string;
+  dstAddressType?: string;
+  newPacketMark?: string;
+  newRoutingMark?: string;
+  passthrough?: boolean;
+  comment?: string;
+  disabled?: boolean;
+  packets?: number;
+  bytes?: number;
+}
+
+export interface MikroTikFilterRule {
+  id: string;
+  chain: string;
+  action: string;
+  packetMark?: string;
+  srcAddressList?: string;
+  comment?: string;
+  disabled?: boolean;
+  packets?: number;
+  bytes?: number;
+}
+
+export interface MikroTikUnpaidFirewallStatus {
+  success: boolean;
+  mode: 'live' | 'error';
+  error?: string;
+  mangleRule: MikroTikMangleRule | null;
+  mangleRuleActive: boolean;
+  dropRule: MikroTikFilterRule | null;
+  dropRuleActive: boolean;
+  unpaidAddresses: MikroTikAddressListEntry[];
+  mangleRulesCount?: number;
+  filterRulesCount?: number;
 }
 
 export type UserPermission = 'ADMIN' | 'OPERATOR';

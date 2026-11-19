@@ -57,7 +57,8 @@ interface SubscriberDetailPageProps {
   subscribers?: Subscriber[];
   payments: PaymentRecord[];
   dhcpLeases?: MikroTikDhcpLease[];
-  leasesMode?: 'live' | 'fallback' | null;
+  leasesMode?: 'live' | 'error' | null;
+  leasesError?: string | null;
   mikrotikInterfaces?: MikroTikInterface[];
   currentUser?: AuthUser | null;
   previousTabName?: string;
@@ -68,7 +69,7 @@ interface SubscriberDetailPageProps {
   onSyncLeases?: () => Promise<{
     success: boolean;
     leases: MikroTikDhcpLease[];
-    mode: 'live' | 'fallback' | null;
+    mode: 'live' | 'error' | null;
     error?: string;
   }>;
   isSyncingLeases?: boolean;
@@ -82,6 +83,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
   payments,
   dhcpLeases = [],
   leasesMode = null,
+  leasesError = null,
   mikrotikInterfaces = [],
   currentUser,
   previousTabName = 'subscribers',
@@ -269,6 +271,8 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
   const unpaidMonths = getUnpaidMonths(subscriber, payments);
   const nameStr = displayName(subscriber);
   const subLeases = getLeasesForSubscriber(subscriber, dhcpLeases);
+  const boundLeases = subLeases.filter((l) => l.status === 'bound');
+  const waitingLeases = subLeases.filter((l) => l.status !== 'bound');
   const unassignedVlans = getUnassignedVlans(subscribers, mikrotikInterfaces, subscriber.vlan);
   const matchedIface = getInterfaceForSubscriber(subscriber, mikrotikInterfaces);
 
@@ -633,19 +637,13 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
     if (!onSyncLeases || !subscriber) return;
     setLeaseSyncMsg(null);
     const res = await onSyncLeases();
-    if (res.success) {
+    if (res.success && res.mode !== 'error') {
       const matched = getLeasesForSubscriber(subscriber, res.leases);
-      if (res.mode === 'fallback') {
-        setLeaseSyncMsg({
-          text: `RouterOS unreachable (${res.error || 'connection timeout'}). Showing ${matched.length} simulated fallback device${matched.length === 1 ? '' : 's'} — check MikroTik settings.`,
-          isError: true,
-        });
-      } else {
-        setLeaseSyncMsg({
-          text: `Synced ${res.leases.length} live lease${res.leases.length === 1 ? '' : 's'} from RouterOS — ${matched.length} device${matched.length === 1 ? '' : 's'} matched for ${subscriber.vlan ? `VLAN ${subscriber.vlan}` : 'this subscriber'}.`,
-          isError: false,
-        });
-      }
+      const matchedBound = matched.filter((l) => l.status === 'bound').length;
+      setLeaseSyncMsg({
+        text: `Synced ${res.leases.length} live lease${res.leases.length === 1 ? '' : 's'} from RouterOS — ${matched.length} matched (${matchedBound} bound) for ${subscriber.vlan ? `VLAN ${subscriber.vlan}` : 'this subscriber'}.`,
+        isError: false,
+      });
     } else {
       setLeaseSyncMsg({
         text: res.error || 'Failed to sync DHCP leases from RouterOS.',
@@ -654,7 +652,7 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
     }
   };
 
-  // Toggle Subscriber Internet Suspension (MikroTik address-list UNPAID)
+  // Toggle Subscriber Internet Suspension (MikroTik address-list UNPAID + Mangle Rule)
   const handleToggleSuspension = async (suspend: boolean) => {
     if (isReadOnly || !subscriber) return;
 
@@ -670,12 +668,12 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
       if (data.success) {
         setIsSuspended(suspend);
         setSuspensionMsg({
-          text: data.message || `Subscriber is now ${suspend ? 'SUSPENDED (Added to address-list UNPAID)' : 'RESTORED (Removed from UNPAID)'}.`,
+          text: data.message || `Subscriber is now ${suspend ? 'SUSPENDED (UNPAID + Mangle rule)' : 'RESTORED (Removed from UNPAID)'}.`,
           isError: false,
         });
       } else {
         setSuspensionMsg({
-          text: data.error || 'Failed to update suspension status on RouterOS.',
+          text: data.error || data.message || 'Failed to update suspension status on RouterOS.',
           isError: true,
         });
       }
@@ -1636,12 +1634,12 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                   </span>
                   {subscriber.vlan && (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                      VLAN {subscriber.vlan}: ONLINE
+                      VLAN {subscriber.vlan}: {isVlanEnabled ? 'ONLINE' : 'DISABLED'}
                     </span>
                   )}
                 </div>
                 <p className="text-[10px] text-slate-400">
-                  Suspension adds subscriber IP to MikroTik address-list <strong className="text-slate-200">UNPAID</strong> while keeping the VLAN online.
+                  Suspension adds subscriber IP to MikroTik address-list <strong className="text-slate-200">UNPAID</strong> and blocks internet via Firewall Mangle rule (<strong className="text-slate-200">UNPAID_INTERNET_BLOCK</strong>) while keeping the VLAN online.
                 </p>
               </div>
 
@@ -1714,19 +1712,24 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                 </h2>
                 <span
                   className={`px-2 py-0.5 rounded-full text-xs font-bold border ${
-                    subLeases.length > 0
+                    boundLeases.length > 0
                       ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                       : 'bg-slate-100 text-slate-600 border-slate-200'
                   }`}
                 >
-                  {subLeases.length} {subLeases.length === 1 ? 'device' : 'devices'}
+                  {boundLeases.length} bound
                 </span>
-                {leasesMode === 'fallback' ? (
+                {waitingLeases.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                    +{waitingLeases.length} waiting
+                  </span>
+                )}
+                {leasesMode === 'error' ? (
                   <span
-                    className="text-[10px] font-bold px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded-full"
-                    title="MikroTik RouterOS could not be reached; displaying simulated fallback leases"
+                    className="text-[10px] font-bold px-2 py-0.5 bg-rose-50 text-rose-800 border border-rose-200 rounded-full"
+                    title={leasesError || 'MikroTik RouterOS connection failed'}
                   >
-                    Offline Fallback
+                    Router Error
                   </span>
                 ) : (
                   <span className="text-[10px] font-bold px-2 py-0.5 bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-full">
@@ -1793,6 +1796,17 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                 <span className="text-[11px] text-slate-400 font-mono">
                   {pingSummary.timestamp}
                 </span>
+              </div>
+            )}
+
+            {/* RouterOS Connection Error */}
+            {leasesMode === 'error' && (
+              <div className="mx-4 sm:mx-5 my-3 px-3 py-2.5 rounded-xl text-xs bg-rose-50 text-rose-900 border border-rose-200 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">RouterOS DHCP query failed: </span>
+                  <span>{leasesError || 'Unable to connect to MikroTik RouterOS REST API.'}</span>
+                </div>
               </div>
             )}
 
@@ -1870,8 +1884,16 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                         )}
                         <div className="text-[10px] text-slate-400 font-mono mt-0.5 flex flex-wrap items-center gap-x-2">
                           <span>{lease.interface || lease.server}</span>
+                          <span className="text-[9px] uppercase font-bold text-slate-500">
+                            • {lease.dynamic === false ? 'Static' : 'Dynamic'}
+                          </span>
                           {lease.lastSeen && <span>• Seen: {lease.lastSeen}</span>}
                         </div>
+                        {lease.comment && (
+                          <div className="text-[10px] text-slate-500 italic mt-0.5 truncate">
+                            {lease.comment}
+                          </div>
+                        )}
                       </div>
                       <span
                         className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0 ${
@@ -1952,9 +1974,17 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
                           )}
                           <div className="text-[10px] font-mono text-slate-400 font-normal flex flex-wrap items-center gap-x-2 mt-0.5">
                             <span>{lease.interface || lease.server}</span>
+                            <span className="text-[9px] uppercase font-bold text-slate-500">
+                              • {lease.dynamic === false ? 'Static' : 'Dynamic'}
+                            </span>
                             {lease.lastSeen && <span>• Last seen: {lease.lastSeen}</span>}
                             {lease.expiresAfter && <span>• Expires: {lease.expiresAfter}</span>}
                           </div>
+                          {lease.comment && (
+                            <div className="text-[10px] text-slate-500 italic mt-0.5">
+                              {lease.comment}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-4 text-center whitespace-nowrap">
                           <span
@@ -2315,11 +2345,11 @@ export const SubscriberDetailPage: React.FC<SubscriberDetailPageProps> = ({
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900">Suspend Internet for {nameStr}?</h3>
-                <p className="text-xs text-slate-500 mt-0.5">MikroTik Firewall Address-List: UNPAID</p>
+                <p className="text-xs text-slate-500 mt-0.5">MikroTik Address-List (UNPAID) + Firewall Mangle Rule</p>
               </div>
             </div>
             <p className="text-xs font-medium text-slate-600 leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-              Suspending will add the subscriber's IP address to the MikroTik firewall address-list <strong className="text-rose-600">UNPAID</strong>. Their web traffic will be blocked or redirected to payment instructions, while their VLAN port remains <strong className="text-emerald-700">ONLINE</strong> so the router stays reachable.
+              Suspending adds the subscriber&apos;s IP/subnet to the MikroTik address-list <strong className="text-rose-600">UNPAID</strong> and blocks internet traffic via the RouterOS <strong className="text-slate-800">Mangle + Forward Drop rule</strong> (<code className="font-mono text-[11px]">UNPAID_INTERNET_BLOCK</code>). Their VLAN interface stays <strong className="text-emerald-700">ONLINE</strong> for management and ARP-Ping.
             </p>
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button

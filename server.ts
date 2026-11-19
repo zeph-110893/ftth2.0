@@ -1,7 +1,7 @@
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { createServer as createViteServer } from 'vite';
 import { getDb, seedDatabase, replaceDatabase } from './server/db.js';
 import { hashPassword, verifyPassword, isHashed } from './server/password.js';
 import {
@@ -15,6 +15,9 @@ import {
   doesLeaseMatchSubscriber,
   getRouterIpAddresses,
   getRouterAddressLists,
+  getUnpaidFirewallStatus,
+  ensureUnpaidMangleBlockRule,
+  removeAddressListEntryById,
   getSubscriberSuspensionStatus,
   addSubscriberToUnpaidList,
   removeSubscriberFromUnpaidList,
@@ -35,8 +38,9 @@ import {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
+  app.set('trust proxy', true);
   app.use(express.json({ limit: '50mb' }));
 
   // Initialize SQLite DB
@@ -48,8 +52,9 @@ async function startServer() {
     { userId: number; username: string; name: string; role: string; permission: 'ADMIN' | 'OPERATOR'; expiresAt: number }
   >();
 
-  // Restore existing non-expired sessions from database
+  // Prune expired sessions and restore active ones from database
   try {
+    db.run('DELETE FROM auth_sessions WHERE expiresAt <= ?', [Date.now()]);
     const savedSessions = db.all('SELECT * FROM auth_sessions WHERE expiresAt > ?', [Date.now()]);
     for (const s of savedSessions) {
       activeSessions.set(s.token, {
@@ -515,7 +520,7 @@ async function startServer() {
         routerDhcpResult = null;
       }
       const allLeases: any[] = Array.isArray(routerDhcpResult?.leases) ? routerDhcpResult.leases : [];
-      const isLiveDhcp = Boolean(routerDhcpResult?.success && routerDhcpResult?.mode !== 'fallback');
+      const isLiveDhcp = Boolean(routerDhcpResult?.success && routerDhcpResult?.mode === 'live');
 
       const rawSubId = typeof req.query.subId === 'string'
         ? req.query.subId.trim()
@@ -1812,6 +1817,69 @@ async function startServer() {
     }
   });
 
+  // Get live RouterOS Mangle + Filter Drop + UNPAID Address-List status
+  app.get('/api/mikrotik/unpaid-firewall', async (req, res) => {
+    try {
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      const result = await getUnpaidFirewallStatus(db);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Install / verify MikroTik Mangle rule (mark-packet UNPAID_INTERNET_BLOCK) + Filter drop rule
+  app.post('/api/mikrotik/unpaid-firewall/ensure', async (req, res) => {
+    try {
+      const currentUser = (req as any).user;
+      const result = await ensureUnpaidMangleBlockRule(db);
+
+      await recordAuditLog(db, {
+        userId: currentUser?.userId,
+        username: currentUser?.username || 'admin',
+        userRole: currentUser?.role || 'admin',
+        action: 'MIKROTIK_MANGLE_PROVISION',
+        category: 'mikrotik',
+        description: result.success
+          ? `Verified/installed MikroTik Mangle ('UNPAID_INTERNET_BLOCK') & Forward Drop rules for UNPAID list`
+          : `Failed to install MikroTik Mangle rules: ${result.error}`,
+        details: result,
+        ipAddress: getClientIp(req),
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Remove a single UNPAID address-list entry directly
+  app.post('/api/mikrotik/address-list/remove', async (req, res) => {
+    try {
+      const { entryId, address } = req.body || {};
+      const currentUser = (req as any).user;
+      if (!entryId && !address) {
+        return res.status(400).json({ success: false, error: 'entryId or address is required' });
+      }
+      const result = await removeAddressListEntryById(db, String(entryId || ''), address ? String(address) : undefined);
+
+      await recordAuditLog(db, {
+        userId: currentUser?.userId,
+        username: currentUser?.username || 'admin',
+        userRole: currentUser?.role || 'admin',
+        action: 'MIKROTIK_SUBSCRIBER_RESTORE',
+        category: 'mikrotik',
+        description: `Removed address-list 'UNPAID' entry ${address || entryId}`,
+        details: { entryId, address, result },
+        ipAddress: getClientIp(req),
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Get specific subscriber suspension status (checks address-list UNPAID)
   app.get('/api/mikrotik/subscriber-suspension/:subId', async (req, res) => {
     try {
@@ -1884,15 +1952,21 @@ async function startServer() {
           userRole: currentUser?.role || 'admin',
           action: disable ? 'MIKROTIK_SUBSCRIBER_SUSPEND' : 'MIKROTIK_SUBSCRIBER_RESTORE',
           category: 'mikrotik',
-          description: `${disable ? 'Suspended' : 'Restored'} internet for Subscriber #${targetSub.id} (${targetSub.first} ${targetSub.last}) via address-list 'UNPAID' (VLAN ${targetSub.vlan} active)`,
+          description: `${disable ? 'Suspended' : 'Restored'} internet for Subscriber #${targetSub.id} (${targetSub.first} ${targetSub.last}) via address-list 'UNPAID' + Mangle rule (VLAN ${targetSub.vlan} kept active)`,
           details: { vlan: targetSub.vlan, subId: targetSub.id, disable, result },
           ipAddress: getClientIp(req),
         });
         return res.json(result);
       }
 
-      // Fallback if no matching subscriber found: toggle raw interface
-      const result: any = await toggleVlanInterface(db, vlan, Boolean(disable), subscribers);
+      // Never disable raw VLAN interfaces — only allow enabling (disable === false) or return policy error
+      if (disable) {
+        return res.status(400).json({
+          success: false,
+          error: `No subscriber matched VLAN ${vlan}. Disabling raw VLAN interfaces is blocked; internet suspension uses address-list 'UNPAID' and Mangle rule.`,
+        });
+      }
+      const result: any = await toggleVlanInterface(db, vlan, false, subscribers);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2051,8 +2125,30 @@ async function startServer() {
   rescheduleOverdueDisconnectionCron();
 
 
+  // Ensure unknown /api/* endpoints return JSON 404 instead of SPA HTML
+  app.all('/api/*', (_req, res) => {
+    res.status(404).json({ error: 'API endpoint not found' });
+  });
+
+  // Global Express error handler (prevents raw stack trace exposure in production)
+  app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (res.headersSent) return next(err);
+    const status = typeof err?.status === 'number' ? err.status : 500;
+    const message = process.env.NODE_ENV === 'production' && status >= 500
+      ? 'Internal server error'
+      : (err?.message || 'Internal server error');
+    console.error('[Express Error]', err);
+    res.status(status).json({ error: message });
+  });
+
   // --- VITE MIDDLEWARE / PRODUCTION STATIC ---
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.join(process.cwd(), 'dist');
+  const distIndexPath = path.join(distPath, 'index.html');
+  const isBundledRuntime = path.basename(process.argv[1] || '').endsWith('.cjs');
+  const isProduction = process.env.NODE_ENV === 'production' || (isBundledRuntime && fs.existsSync(distIndexPath));
+
+  if (!isProduction) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true, hmr: false },
       appType: 'spa',
@@ -2077,18 +2173,46 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.use(express.static(distPath, {
+      maxAge: '7d',
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('index.html')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        }
+      },
+    }));
+    app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.sendFile(distIndexPath);
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  const httpServer = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://0.0.0.0:${PORT} (${isProduction ? 'production' : 'development'})`);
   });
+
+  const gracefulShutdown = (signal: string) => {
+    console.log(`[Server] Received ${signal}, shutting down cleanly...`);
+    if (overdueCronTimeout) {
+      clearTimeout(overdueCronTimeout);
+      overdueCronTimeout = null;
+    }
+    try {
+      db.save();
+    } catch (e) {
+      console.error('[Server] Error flushing DB during shutdown:', e);
+    }
+    httpServer.close(() => {
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 5000).unref();
+  };
+
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 }
 
 startServer().catch((err) => {
   console.error('Failed to start server:', err);
+  process.exit(1);
 });

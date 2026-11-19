@@ -207,23 +207,61 @@ export async function fetchFromRouterOS(cfg: MikroTikConfigRecord, endpoint: str
   }
 }
 
+function toRouterArray(val: any): any[] {
+  if (Array.isArray(val)) return val;
+  if (val && typeof val === 'object' && (val['.id'] || val.name || val.address)) return [val];
+  return [];
+}
+
+function extractVlanNumberFromText(text?: string): number | undefined {
+  if (!text) return undefined;
+  const trimmed = String(text).trim();
+  const vlanWordMatch = trimmed.match(/(?:^|[^a-z0-9])vlan[-_.\s]*(\d+)(?:$|[^0-9])/i);
+  if (vlanWordMatch) {
+    const parsed = parseInt(vlanWordMatch[1], 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  const dotSubMatch = trimmed.match(/\.(\d+)$/);
+  if (dotSubMatch) {
+    const parsed = parseInt(dotSubMatch[1], 10);
+    if (!isNaN(parsed) && parsed > 0 && parsed <= 4094) return parsed;
+  }
+  return undefined;
+}
+
 export async function getRouterInterfaces(db: SqliteWrapper, subscribers: any[] = []) {
   const cfg = getMikrotikConfig(db);
 
   try {
-    const ifaces = await fetchFromRouterOS(cfg, 'interface');
-    const parsedList = (Array.isArray(ifaces) ? ifaces : []).map((i: any) => {
-      let vlanId = i['vlan-id'] ? parseInt(i['vlan-id'], 10) : undefined;
-      if (!vlanId && i.name) {
-        const vlanNameMatch = i.name.match(/vlan[-_\.\s]*(\d+)/i) || i.name.match(/(\d+)/);
-        if (vlanNameMatch && (i.type === 'vlan' || i.name.toLowerCase().includes('vlan'))) {
-          vlanId = parseInt(vlanNameMatch[1], 10);
-        }
+    // Query both /interface (for traffic counters & running state) and /interface/vlan (for authoritative vlan-id)
+    const [ifacesRaw, vlanIfacesRaw] = await Promise.all([
+      fetchFromRouterOS(cfg, 'interface', 'GET', undefined, 5000),
+      fetchFromRouterOS(cfg, 'interface/vlan', 'GET', undefined, 5000).catch(() => []),
+    ]);
+
+    const vlanMetaByName = new Map<string, { vlanId?: number; parentInterface?: string }>();
+    for (const v of toRouterArray(vlanIfacesRaw)) {
+      const name = String(v?.name || '').trim();
+      const vid = v['vlan-id'] ? parseInt(String(v['vlan-id']), 10) : NaN;
+      if (name) {
+        vlanMetaByName.set(name.toLowerCase(), {
+          vlanId: !isNaN(vid) && vid > 0 ? vid : undefined,
+          parentInterface: v.interface ? String(v.interface).trim() : undefined,
+        });
+      }
+    }
+
+    const parsedList = toRouterArray(ifacesRaw).map((i: any) => {
+      const name = String(i.name || '').trim();
+      const vlanMeta = name ? vlanMetaByName.get(name.toLowerCase()) : undefined;
+      let vlanId = vlanMeta?.vlanId || (i['vlan-id'] ? parseInt(String(i['vlan-id']), 10) : undefined);
+      if (!vlanId && name) {
+        vlanId = extractVlanNumberFromText(name);
       }
 
       return {
         id: i['.id'],
-        name: i.name,
+        name,
         type: i.type || 'ether',
         vlanId,
         running: i.running === 'true' || i.running === true,
@@ -238,12 +276,12 @@ export async function getRouterInterfaces(db: SqliteWrapper, subscribers: any[] 
       };
     });
 
-    // Filter to print ONLY interfaces with the word "vlan" (in name, type, comment, or vlanId)
+    // Keep all interfaces marked as VLAN in RouterOS (/interface/vlan or type='vlan' or 'vlan' in name/comment)
     const vlanOnlyInterfaces = parsedList.filter((iface: any) => {
       const name = (iface.name || '').toLowerCase();
       const type = (iface.type || '').toLowerCase();
       const comment = (iface.comment || '').toLowerCase();
-      return name.includes('vlan') || type.includes('vlan') || comment.includes('vlan') || iface.vlanId !== undefined;
+      return type === 'vlan' || iface.vlanId !== undefined || name.includes('vlan') || comment.includes('vlan');
     });
 
     return {
@@ -401,75 +439,96 @@ export async function deleteDhcpLease(
   }
 }
 
-function extractVlanNumberFromText(text?: string): number | undefined {
-  if (!text) return undefined;
-  const match = text.match(/(?:^|[^a-z0-9])vlan[-_.\s]*(\d+)(?:$|[^0-9])/i);
-  if (match) {
-    const parsed = parseInt(match[1], 10);
-    if (!isNaN(parsed) && parsed > 0) return parsed;
-  }
-  return undefined;
-}
-
 function normalizeMacHex(mac?: string): string {
   return (mac || '').trim().toLowerCase().replace(/[^a-f0-9]/g, '');
+}
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function commentContainsFullName(comment: string, first?: string, last?: string): boolean {
+  const f = (first || '').trim();
+  const l = (last || '').trim();
+  if (f.length < 2 || l.length < 2) return false;
+  const firstTokens = f.split(/\s+/).filter((t) => t.length >= 2);
+  const lastTokens = l.split(/\s+/).filter((t) => t.length >= 2);
+  if (firstTokens.length === 0 || lastTokens.length === 0) return false;
+  return [...firstTokens, ...lastTokens].every((tok) =>
+    new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(tok)}(?:$|[^a-z0-9])`, 'i').test(comment)
+  );
 }
 
 export function doesLeaseMatchSubscriber(lease: any, sub: any): boolean {
   if (!lease || !sub || lease.disabled) return false;
 
-  // 1. Exact 12-hex MAC address match (highest precision)
+  const cleanIp = String(lease.address || '').trim().split('/')[0];
+
+  // 1. Exact 12-hex MAC address match (also checks Option 82 agent-remote-id if MAC-formatted)
   const subMac = normalizeMacHex(sub.macAddress);
   const leaseMac = normalizeMacHex(lease.macAddress);
-  if (subMac.length === 12 && leaseMac.length === 12) {
-    if (leaseMac === subMac) return true;
+  const remoteIdMac = normalizeMacHex(lease.agentRemoteId);
+  if (subMac.length === 12) {
+    if ((leaseMac.length === 12 && leaseMac === subMac) || (remoteIdMac.length === 12 && remoteIdMac === subMac)) {
+      return true;
+    }
+  }
+
+  // 2. Explicit subscriber ID reference in lease comment (#5, ID #5, Subscriber #5, sub_5)
+  if (lease.comment) {
+    const comment = String(lease.comment);
+    const idRegex = new RegExp(`(?:^|[^0-9])(?:subscriber\\s*#|id\\s*#|sub[_\\s#-]+|#)${sub.id}(?:$|[^0-9])`, 'i');
+    if (idRegex.test(comment)) return true;
+
+    // Full name match in comment (e.g. "Dela Cruz, Juan" or "Juan Dela Cruz")
+    if (commentContainsFullName(comment, sub.first, sub.last)) return true;
+  }
+
+  // 3. Explicit IPv4 saved inside subscriber notes (common for static/IPoE WAN tracking)
+  if (sub.notes && cleanIp) {
+    const noteIps: string[] = String(sub.notes).match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) ?? [];
+    if (noteIps.includes(cleanIp)) return true;
   }
 
   const subVlan = sub.vlan !== null && sub.vlan !== undefined && !isNaN(Number(sub.vlan)) && Number(sub.vlan) > 0
     ? Number(sub.vlan)
     : null;
+  if (subVlan === null) return false;
 
-  // If RouterOS resolved the lease's exact VLAN ID from DHCP server -> interface, enforce it strictly
+  // 4. Authoritative VLAN ID resolved from RouterOS (/interface/vlan -> /ip/dhcp-server -> /ip/address)
   const leaseVlanId = lease.vlanId !== undefined && lease.vlanId !== null && !isNaN(Number(lease.vlanId)) && Number(lease.vlanId) > 0
     ? Number(lease.vlanId)
     : null;
   if (leaseVlanId !== null) {
-    if (subVlan !== null && leaseVlanId === subVlan) return true;
-    // Do not fall back to fuzzy IP/comment guesses if we already know this lease belongs to a different VLAN
-    if (subVlan !== null && leaseVlanId !== subVlan) return false;
+    return leaseVlanId === subVlan;
   }
 
-  // 2. Exact VLAN token match on interface / DHCP server / IP subnet
-  if (subVlan !== null) {
-    const vlanPattern = new RegExp(`(?:^|[^0-9])(?:vlan|dhcp)[-_.\s]*${subVlan}(?:$|[^0-9])`, 'i');
-    if (lease.interface && vlanPattern.test(String(lease.interface))) return true;
-    if (lease.server) {
-      const srv = String(lease.server).trim();
-      if (vlanPattern.test(srv) || srv === String(subVlan)) return true;
-    }
-
-    // Check IPv4 third-octet subnet ONLY on standard per-VLAN subnets (never substring .includes('.16.')!)
-    if (lease.address && subVlan <= 254) {
-      const cleanIp = String(lease.address).trim().split('/')[0];
-      const octets = cleanIp.split('.');
-      if (octets.length === 4 && octets[2] === String(subVlan)) {
-        const o0 = octets[0];
-        const o1 = octets[1];
-        if ((o0 === '172' && o1 === '16') || (o0 === '192' && o1 === '168') || (o0 === '10' && o1 === '0')) {
-          return true;
-        }
-      }
-    }
+  // 5. Exact VLAN token match on interface / DHCP server / Option 82 circuit-id / comment
+  const vlanTokenRegex = new RegExp(`(?:(?:^|[^0-9])(?:vlan|dhcp)[-_\\.\\s]*${subVlan}(?:$|[^0-9])|\\.${subVlan}$)`, 'i');
+  if (lease.interface && vlanTokenRegex.test(String(lease.interface))) return true;
+  if (lease.server) {
+    const srv = String(lease.server).trim();
+    if (vlanTokenRegex.test(srv) || srv === String(subVlan)) return true;
   }
-
-  // 3. Exact boundary match in RouterOS lease comment (e.g. "Subscriber #5", "ID #5", "VLAN 10")
+  if (lease.agentCircuitId) {
+    const cid = String(lease.agentCircuitId);
+    const cidVlanRegex = new RegExp(`(?:^|[^0-9])(?:vlan|vid)[-_:\\s]*${subVlan}(?:$|[^0-9])`, 'i');
+    if (cidVlanRegex.test(cid)) return true;
+  }
   if (lease.comment) {
-    const comment = String(lease.comment);
-    const idRegex = new RegExp(`(?:^|[^0-9])(?:subscriber\\s*#|id\\s*#|sub[_\\s#-]+)${sub.id}(?:$|[^0-9])`, 'i');
-    if (idRegex.test(comment)) return true;
-    if (subVlan !== null) {
-      const vlanCommentRegex = new RegExp(`(?:^|[^0-9])vlan[-_\\s]*${subVlan}(?:$|[^0-9])`, 'i');
-      if (vlanCommentRegex.test(comment)) return true;
+    const vlanCommentRegex = new RegExp(`(?:^|[^0-9])vlan[-_\\s]*${subVlan}(?:$|[^0-9])`, 'i');
+    if (vlanCommentRegex.test(String(lease.comment))) return true;
+  }
+
+  // 6. Standard per-VLAN IPv4 3rd-octet subnet (only when RouterOS didn't provide an authoritative vlanId)
+  if (cleanIp && subVlan <= 254) {
+    const octets = cleanIp.split('.');
+    if (octets.length === 4 && octets[2] === String(subVlan)) {
+      const o0 = octets[0];
+      const o1 = octets[1];
+      if ((o0 === '172' && o1 === '16') || (o0 === '192' && o1 === '168') || (o0 === '10' && o1 === '0')) {
+        return true;
+      }
     }
   }
 
@@ -480,73 +539,76 @@ export async function getRouterDhcpLeases(db: SqliteWrapper, subscribers: any[] 
   const cfg = getMikrotikConfig(db);
 
   try {
-    // Query live RouterOS DHCP leases plus DHCP server/interface/address tables in parallel
-    // so server names like "dhcp1" on interface "vlan10" resolve accurately to VLAN 10.
-    const [leasesRaw, serversRaw, interfacesRaw, ipAddressesRaw] = await Promise.all([
+    // Query live RouterOS DHCP leases plus /interface/vlan, /interface, /ip/dhcp-server, and /ip/address
+    // Note: /rest/interface/vlan provides the authoritative `vlan-id` field that /rest/interface omits.
+    const [leasesRaw, serversRaw, vlanInterfacesRaw, interfacesRaw, ipAddressesRaw] = await Promise.all([
       fetchFromRouterOS(cfg, 'ip/dhcp-server/lease', 'GET', undefined, 5000),
       fetchFromRouterOS(cfg, 'ip/dhcp-server', 'GET', undefined, 5000).catch(() => []),
+      fetchFromRouterOS(cfg, 'interface/vlan', 'GET', undefined, 5000).catch(() => []),
       fetchFromRouterOS(cfg, 'interface', 'GET', undefined, 5000).catch(() => []),
       fetchFromRouterOS(cfg, 'ip/address', 'GET', undefined, 5000).catch(() => []),
     ]);
 
     const ifaceVlanMap = new Map<string, number>();
-    if (Array.isArray(interfacesRaw)) {
-      for (const iface of interfacesRaw) {
-        const name = String(iface?.name || '').trim();
-        if (!name) continue;
-        const explicitVlan = iface['vlan-id'] ? parseInt(String(iface['vlan-id']), 10) : NaN;
-        const vlanId = !isNaN(explicitVlan) && explicitVlan > 0
-          ? explicitVlan
-          : extractVlanNumberFromText(name) || extractVlanNumberFromText(iface?.comment);
-        if (vlanId) {
-          ifaceVlanMap.set(name.toLowerCase(), vlanId);
-        }
+    for (const v of toRouterArray(vlanInterfacesRaw)) {
+      const name = String(v?.name || '').trim();
+      const vid = v['vlan-id'] ? parseInt(String(v['vlan-id']), 10) : NaN;
+      if (name && !isNaN(vid) && vid > 0) {
+        ifaceVlanMap.set(name.toLowerCase(), vid);
+      }
+    }
+
+    for (const iface of toRouterArray(interfacesRaw)) {
+      const name = String(iface?.name || '').trim();
+      if (!name || ifaceVlanMap.has(name.toLowerCase())) continue;
+      const explicitVlan = iface['vlan-id'] ? parseInt(String(iface['vlan-id']), 10) : NaN;
+      const vlanId = !isNaN(explicitVlan) && explicitVlan > 0
+        ? explicitVlan
+        : extractVlanNumberFromText(name) || extractVlanNumberFromText(iface?.comment);
+      if (vlanId) {
+        ifaceVlanMap.set(name.toLowerCase(), vlanId);
       }
     }
 
     const serverInfoMap = new Map<string, { interfaceName?: string; vlanId?: number }>();
-    if (Array.isArray(serversRaw)) {
-      for (const srv of serversRaw) {
-        const srvName = String(srv?.name || '').trim();
-        const ifaceName = String(srv?.interface || '').trim();
-        if (!srvName) continue;
-        const vlanId =
-          (ifaceName ? ifaceVlanMap.get(ifaceName.toLowerCase()) : undefined) ||
-          extractVlanNumberFromText(ifaceName) ||
-          extractVlanNumberFromText(srvName) ||
-          extractVlanNumberFromText(srv?.comment);
-        serverInfoMap.set(srvName.toLowerCase(), {
-          interfaceName: ifaceName || undefined,
-          vlanId,
-        });
-      }
+    for (const srv of toRouterArray(serversRaw)) {
+      const srvName = String(srv?.name || '').trim();
+      const ifaceName = String(srv?.interface || '').trim();
+      if (!srvName) continue;
+      const vlanId =
+        (ifaceName ? ifaceVlanMap.get(ifaceName.toLowerCase()) : undefined) ||
+        extractVlanNumberFromText(ifaceName) ||
+        extractVlanNumberFromText(srvName) ||
+        extractVlanNumberFromText(srv?.comment);
+      serverInfoMap.set(srvName.toLowerCase(), {
+        interfaceName: ifaceName || undefined,
+        vlanId,
+      });
     }
 
-    // Map /ip/address gateway networks (e.g. 172.16.20.1/24 -> 172.16.20.0/24 on vlan20) to VLAN IDs
+    // Map /ip/address gateway networks ONLY for interfaces that resolve to a unique VLAN
     const cidrVlanList: Array<{ networkInt: number; maskInt: number; vlanId: number; ifaceName: string }> = [];
-    if (Array.isArray(ipAddressesRaw)) {
-      for (const addr of ipAddressesRaw) {
-        if (addr?.disabled === 'true' || addr?.disabled === true) continue;
-        const ifaceName = String(addr?.interface || '').trim();
-        const vlanId =
-          (ifaceName ? ifaceVlanMap.get(ifaceName.toLowerCase()) : undefined) ||
-          extractVlanNumberFromText(ifaceName) ||
-          extractVlanNumberFromText(addr?.comment);
-        const rawAddr = String(addr?.address || '').trim();
-        const [ipPart, prefixPart] = rawAddr.split('/');
-        const prefixLen = parseInt(prefixPart || '', 10);
-        if (vlanId && ipPart && !isNaN(prefixLen) && prefixLen >= 8 && prefixLen <= 30) {
-          const octets = ipPart.split('.').map(Number);
-          if (octets.length === 4 && octets.every((n) => !isNaN(n) && n >= 0 && n <= 255)) {
-            const ipInt = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
-            const maskInt = (0xffffffff << (32 - prefixLen)) >>> 0;
-            cidrVlanList.push({
-              networkInt: (ipInt & maskInt) >>> 0,
-              maskInt,
-              vlanId,
-              ifaceName,
-            });
-          }
+    for (const addr of toRouterArray(ipAddressesRaw)) {
+      if (addr?.disabled === 'true' || addr?.disabled === true) continue;
+      const ifaceName = String(addr?.interface || '').trim();
+      const vlanId =
+        (ifaceName ? ifaceVlanMap.get(ifaceName.toLowerCase()) : undefined) ||
+        extractVlanNumberFromText(ifaceName) ||
+        extractVlanNumberFromText(addr?.comment);
+      const rawAddr = String(addr?.address || '').trim();
+      const [ipPart, prefixPart] = rawAddr.split('/');
+      const prefixLen = parseInt(prefixPart || '', 10);
+      if (vlanId && ipPart && !isNaN(prefixLen) && prefixLen >= 8 && prefixLen <= 30) {
+        const octets = ipPart.split('.').map(Number);
+        if (octets.length === 4 && octets.every((n) => !isNaN(n) && n >= 0 && n <= 255)) {
+          const ipInt = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+          const maskInt = (0xffffffff << (32 - prefixLen)) >>> 0;
+          cidrVlanList.push({
+            networkInt: (ipInt & maskInt) >>> 0,
+            maskInt,
+            vlanId,
+            ifaceName,
+          });
         }
       }
     }
@@ -557,20 +619,31 @@ export async function getRouterDhcpLeases(db: SqliteWrapper, subscribers: any[] 
       const octets = clean.split('.').map(Number);
       if (octets.length !== 4 || octets.some((n) => isNaN(n) || n < 0 || n > 255)) return {};
       const ipInt = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+      // Prefer the longest (most specific) subnet prefix match
+      const matches: Array<{ networkInt: number; maskInt: number; vlanId: number; ifaceName: string }> = [];
       for (const entry of cidrVlanList) {
         if (((ipInt & entry.maskInt) >>> 0) === entry.networkInt) {
-          return { vlanId: entry.vlanId, ifaceName: entry.ifaceName };
+          matches.push(entry);
+        }
+      }
+      if (matches.length === 1) {
+        return { vlanId: matches[0].vlanId, ifaceName: matches[0].ifaceName };
+      }
+      if (matches.length > 1) {
+        matches.sort((a, b) => b.maskInt - a.maskInt);
+        if (matches[0].maskInt !== matches[1].maskInt) {
+          return { vlanId: matches[0].vlanId, ifaceName: matches[0].ifaceName };
         }
       }
       return {};
     };
 
-    const parsedLeases = (Array.isArray(leasesRaw) ? leasesRaw : [])
+    const parsedLeases = toRouterArray(leasesRaw)
       .map((l: any) => {
         const disabled = l.disabled === 'true' || l.disabled === true;
         const dynamic = l.dynamic === 'true' || l.dynamic === true;
-        const activeAddr = String(l['active-address'] || '').trim();
-        const configuredAddr = String(l.address || '').trim();
+        const activeAddr = String(l['active-address'] || '').trim().split('/')[0];
+        const configuredAddr = String(l.address || '').trim().split('/')[0];
         const address = activeAddr || configuredAddr;
         const activeMac = String(l['active-mac-address'] || '').trim();
         const configuredMac = String(l['mac-address'] || '').trim();
@@ -579,12 +652,17 @@ export async function getRouterDhcpLeases(db: SqliteWrapper, subscribers: any[] 
         const rawStatus = String(l.status || '').trim().toLowerCase();
         const status = rawStatus || (activeAddr ? 'bound' : 'waiting');
 
+        const agentCircuitId = String(l['agent-circuit-id'] || '').trim() || undefined;
+        const agentRemoteId = String(l['agent-remote-id'] || '').trim() || undefined;
+        const clientId = String(l['active-client-id'] || l['client-id'] || '').trim() || undefined;
+
         const srvInfo = serverInfoMap.get(server.toLowerCase());
         const ipInfo = resolveVlanByIp(address);
         const vlanId =
           srvInfo?.vlanId ||
           extractVlanNumberFromText(server) ||
           ipInfo.vlanId ||
+          extractVlanNumberFromText(agentCircuitId) ||
           extractVlanNumberFromText(l.comment);
         const resolvedInterface = srvInfo?.interfaceName || ipInfo.ifaceName;
 
@@ -601,6 +679,9 @@ export async function getRouterDhcpLeases(db: SqliteWrapper, subscribers: any[] 
           dynamic,
           lastSeen: String(l['last-seen'] || '').trim() || undefined,
           expiresAfter: String(l['expires-after'] || '').trim() || undefined,
+          agentCircuitId,
+          agentRemoteId,
+          clientId,
           comment: String(l.comment || '').trim(),
         };
       })
@@ -616,50 +697,24 @@ export async function getRouterDhcpLeases(db: SqliteWrapper, subscribers: any[] 
     return {
       success: true,
       mode: 'live' as const,
+      host: cfg.host,
+      port: cfg.port,
+      useSsl: Boolean(cfg.useSsl),
       fetchedAt: new Date().toISOString(),
       leases: parsedLeases,
     };
   } catch (err: any) {
-    // If the router is unreachable in preview/offline sandbox, generate fallback DHCP leases matching the 172.16.x.x network format
-    const fallbackLeases: any[] = [];
-    for (const sub of subscribers) {
-      if (sub.vlan && Number(sub.vlan) > 0) {
-        const vlanNum = Number(sub.vlan);
-        const thirdOctet = vlanNum <= 254 ? vlanNum : ((vlanNum - 1) % 254) + 1;
-        fallbackLeases.push({
-          id: `*sim-${sub.id}-1`,
-          address: `172.16.${thirdOctet}.10`,
-          macAddress: sub.macAddress || `48:8F:5A:${String(thirdOctet).padStart(2, '0')}:12:34`,
-          hostName: `${sub.last}-ONU`,
-          server: `vlan${vlanNum}`,
-          interface: `vlan${vlanNum}`,
-          vlanId: vlanNum,
-          status: 'bound',
-          disabled: false,
-          dynamic: true,
-          comment: `Subscriber #${sub.id} - ${sub.first} ${sub.last}`,
-        });
-        fallbackLeases.push({
-          id: `*sim-${sub.id}-2`,
-          address: `172.16.${thirdOctet}.25`,
-          macAddress: `A4:C3:61:${String(thirdOctet).padStart(2, '0')}:56:78`,
-          hostName: `${sub.first}-Device`,
-          server: `vlan${vlanNum}`,
-          interface: `vlan${vlanNum}`,
-          vlanId: vlanNum,
-          status: 'bound',
-          disabled: false,
-          dynamic: true,
-          comment: `Subscriber #${sub.id} - ${sub.first} ${sub.last}`,
-        });
-      }
-    }
+    // Do NOT return fake/simulated leases when RouterOS fails — return the honest connection error
+    // so the UI never displays fabricated devices that don't match the user's MikroTik router.
     return {
-      success: true,
-      mode: 'fallback' as const,
-      error: err?.message || 'RouterOS unreachable',
+      success: false,
+      mode: 'error' as const,
+      error: err?.message || `Unable to reach MikroTik RouterOS at ${cfg.useSsl ? 'https' : 'http'}://${cfg.host}:${cfg.port}`,
+      host: cfg.host,
+      port: cfg.port,
+      useSsl: Boolean(cfg.useSsl),
       fetchedAt: new Date().toISOString(),
-      leases: fallbackLeases,
+      leases: [],
     };
   }
 }
@@ -923,13 +978,377 @@ export async function pingMultipleIpAddresses(
   return results;
 }
 
+export const UNPAID_ADDRESS_LIST_NAME = 'UNPAID';
+export const UNPAID_PACKET_MARK = 'UNPAID_INTERNET_BLOCK';
+export const UNPAID_MANGLE_COMMENT = 'FTTH-SYSTEM: Mark UNPAID subscriber internet traffic for block';
+export const UNPAID_FILTER_COMMENT = 'FTTH-SYSTEM: Drop UNPAID mangle-marked internet traffic';
+
+function isValidIpv4OrCidr(addr: string): boolean {
+  const m = addr.trim().match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:\/(\d{1,2}))?$/);
+  if (!m) return false;
+  for (let i = 1; i <= 4; i++) {
+    const oct = parseInt(m[i], 10);
+    if (isNaN(oct) || oct < 0 || oct > 255) return false;
+  }
+  if (m[5] !== undefined) {
+    const prefix = parseInt(m[5], 10);
+    if (isNaN(prefix) || prefix < 0 || prefix > 32) return false;
+  }
+  return true;
+}
+
+async function addRouterOSRecord(cfg: MikroTikConfigRecord, resourcePath: string, payload: Record<string, any>) {
+  const cleanPath = resourcePath.replace(/^\//, '');
+  try {
+    return await fetchFromRouterOS(cfg, cleanPath, 'PUT', payload, 4000);
+  } catch (putErr: any) {
+    // Fallback for RouterOS variants that accept POST .../add instead of PUT
+    try {
+      return await fetchFromRouterOS(cfg, `${cleanPath}/add`, 'POST', payload, 4000);
+    } catch (postErr: any) {
+      throw new Error(postErr?.message || putErr?.message || `Failed to create ${cleanPath} record`);
+    }
+  }
+}
+
+async function moveRouterOSRuleToTop(cfg: MikroTikConfigRecord, resourcePath: string, ruleId: string, existingList: any[]) {
+  if (!ruleId || !Array.isArray(existingList) || existingList.length === 0) return;
+  const firstId = existingList[0]?.['.id'];
+  if (!firstId || firstId === ruleId) return;
+  const cleanPath = resourcePath.replace(/^\//, '');
+  try {
+    await fetchFromRouterOS(cfg, `${cleanPath}/move`, 'POST', {
+      numbers: ruleId,
+      destination: firstId,
+    }, 3000);
+  } catch {
+    // Some RouterOS versions expect numeric index destination '0'
+    try {
+      await fetchFromRouterOS(cfg, `${cleanPath}/move`, 'POST', {
+        numbers: ruleId,
+        destination: '0',
+      }, 3000);
+    } catch {
+      // ignore if move is not supported on router version
+    }
+  }
+}
+
+function parseMangleRule(item: any) {
+  return {
+    id: item['.id'] || '',
+    chain: item.chain || '',
+    action: item.action || '',
+    srcAddressList: item['src-address-list'] || '',
+    dstAddressType: item['dst-address-type'] || '',
+    newPacketMark: item['new-packet-mark'] || '',
+    newRoutingMark: item['new-routing-mark'] || '',
+    passthrough: item.passthrough === undefined ? undefined : item.passthrough === 'true' || item.passthrough === true || item.passthrough === 'yes',
+    comment: item.comment || '',
+    disabled: item.disabled === 'true' || item.disabled === true,
+    packets: item.packets !== undefined ? parseInt(String(item.packets), 10) || 0 : 0,
+    bytes: item.bytes !== undefined ? parseInt(String(item.bytes), 10) || 0 : 0,
+  };
+}
+
+function parseFilterRule(item: any) {
+  return {
+    id: item['.id'] || '',
+    chain: item.chain || '',
+    action: item.action || '',
+    packetMark: item['packet-mark'] || '',
+    srcAddressList: item['src-address-list'] || '',
+    comment: item.comment || '',
+    disabled: item.disabled === 'true' || item.disabled === true,
+    packets: item.packets !== undefined ? parseInt(String(item.packets), 10) || 0 : 0,
+    bytes: item.bytes !== undefined ? parseInt(String(item.bytes), 10) || 0 : 0,
+  };
+}
+
+function isOurUnpaidMangleRule(item: any): boolean {
+  const comment = String(item?.comment || '');
+  const list = String(item?.['src-address-list'] || '').toUpperCase();
+  const action = String(item?.action || '').toLowerCase();
+  const mark = String(item?.['new-packet-mark'] || '').toUpperCase();
+  return (
+    comment === UNPAID_MANGLE_COMMENT ||
+    (list === UNPAID_ADDRESS_LIST_NAME &&
+      item?.chain === 'prerouting' &&
+      action === 'mark-packet' &&
+      mark === UNPAID_PACKET_MARK)
+  );
+}
+
+function isOurUnpaidFilterDropRule(item: any): boolean {
+  const comment = String(item?.comment || '');
+  const action = String(item?.action || '').toLowerCase();
+  const packetMark = String(item?.['packet-mark'] || '').toUpperCase();
+  const list = String(item?.['src-address-list'] || '').toUpperCase();
+  return (
+    comment === UNPAID_FILTER_COMMENT ||
+    (item?.chain === 'forward' &&
+      action === 'drop' &&
+      (packetMark === UNPAID_PACKET_MARK || list === UNPAID_ADDRESS_LIST_NAME))
+  );
+}
+
+/**
+ * Ensures MikroTik RouterOS has:
+ * 1) Mangle rule in /ip/firewall/mangle:
+ *    chain=prerouting src-address-list=UNPAID dst-address-type=!local action=mark-packet new-packet-mark=UNPAID_INTERNET_BLOCK passthrough=no
+ * 2) Filter drop rule at top of /ip/firewall/filter forward chain:
+ *    chain=forward packet-mark=UNPAID_INTERNET_BLOCK action=drop
+ */
+export async function ensureUnpaidMangleBlockRule(db: SqliteWrapper) {
+  initMikrotikDb(db);
+  const cfg = getMikrotikConfig(db);
+
+  try {
+    const [mangleRaw, filterRaw] = await Promise.all([
+      fetchFromRouterOS(cfg, 'ip/firewall/mangle', 'GET', undefined, 5000),
+      fetchFromRouterOS(cfg, 'ip/firewall/filter', 'GET', undefined, 5000),
+    ]);
+
+    const mangleList = toRouterArray(mangleRaw);
+    const filterList = toRouterArray(filterRaw);
+
+    let mangleRuleRaw = mangleList.find(isOurUnpaidMangleRule);
+    let mangleActionTaken: 'created' | 'enabled' | 'verified' = 'verified';
+
+    if (!mangleRuleRaw) {
+      const manglePayload: Record<string, any> = {
+        chain: 'prerouting',
+        'src-address-list': UNPAID_ADDRESS_LIST_NAME,
+        'dst-address-type': '!local',
+        action: 'mark-packet',
+        'new-packet-mark': UNPAID_PACKET_MARK,
+        passthrough: 'no',
+        comment: UNPAID_MANGLE_COMMENT,
+        disabled: 'false',
+      };
+      const created = await addRouterOSRecord(cfg, 'ip/firewall/mangle', manglePayload);
+      mangleRuleRaw = created?.['.id'] ? created : { ...manglePayload, '.id': created?.ret || '' };
+      mangleActionTaken = 'created';
+
+      // Re-fetch or move newly created rule to top of prerouting if needed
+      if (mangleRuleRaw['.id'] && mangleList.length > 0) {
+        await moveRouterOSRuleToTop(cfg, 'ip/firewall/mangle', mangleRuleRaw['.id'], mangleList);
+      }
+    } else if (mangleRuleRaw.disabled === 'true' || mangleRuleRaw.disabled === true || mangleRuleRaw.passthrough !== 'no') {
+      await fetchFromRouterOS(cfg, `ip/firewall/mangle/${encodeURIComponent(mangleRuleRaw['.id'])}`, 'PATCH', {
+        disabled: 'false',
+        'src-address-list': UNPAID_ADDRESS_LIST_NAME,
+        'dst-address-type': '!local',
+        action: 'mark-packet',
+        'new-packet-mark': UNPAID_PACKET_MARK,
+        passthrough: 'no',
+      });
+      mangleRuleRaw.disabled = 'false';
+      mangleActionTaken = 'enabled';
+    }
+
+    let filterRuleRaw = filterList.find(isOurUnpaidFilterDropRule);
+    let filterActionTaken: 'created' | 'enabled' | 'verified' = 'verified';
+
+    if (!filterRuleRaw) {
+      const filterPayload: Record<string, any> = {
+        chain: 'forward',
+        'packet-mark': UNPAID_PACKET_MARK,
+        action: 'drop',
+        comment: UNPAID_FILTER_COMMENT,
+        disabled: 'false',
+      };
+      const created = await addRouterOSRecord(cfg, 'ip/firewall/filter', filterPayload);
+      filterRuleRaw = created?.['.id'] ? created : { ...filterPayload, '.id': created?.ret || '' };
+      filterActionTaken = 'created';
+
+      // Place above fasttrack-connection / accept established rules so UNPAID drops immediately
+      if (filterRuleRaw['.id'] && filterList.length > 0) {
+        await moveRouterOSRuleToTop(cfg, 'ip/firewall/filter', filterRuleRaw['.id'], filterList);
+      }
+    } else {
+      const needsPatch =
+        filterRuleRaw.disabled === 'true' ||
+        filterRuleRaw.disabled === true ||
+        filterRuleRaw['packet-mark'] !== UNPAID_PACKET_MARK ||
+        filterRuleRaw.action !== 'drop';
+      if (needsPatch) {
+        await fetchFromRouterOS(cfg, `ip/firewall/filter/${encodeURIComponent(filterRuleRaw['.id'])}`, 'PATCH', {
+          disabled: 'false',
+          'packet-mark': UNPAID_PACKET_MARK,
+          action: 'drop',
+        });
+        filterRuleRaw.disabled = 'false';
+        filterActionTaken = 'enabled';
+      }
+      // Ensure drop rule is above any fasttrack/established rule
+      const firstForward = filterList.find((r: any) => r.chain === 'forward');
+      if (firstForward && firstForward['.id'] !== filterRuleRaw['.id']) {
+        await moveRouterOSRuleToTop(cfg, 'ip/firewall/filter', filterRuleRaw['.id'], [firstForward]);
+      }
+    }
+
+    return {
+      success: true,
+      mangleActionTaken,
+      filterActionTaken,
+      mangleRule: parseMangleRule(mangleRuleRaw),
+      dropRule: parseFilterRule(filterRuleRaw),
+      message: `RouterOS Mangle ('${UNPAID_PACKET_MARK}') and Forward Drop rules are active for address-list '${UNPAID_ADDRESS_LIST_NAME}'.`,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || 'Failed to provision MikroTik Mangle/Firewall rules',
+      mangleRule: null,
+      dropRule: null,
+    };
+  }
+}
+
+export async function getUnpaidFirewallStatus(db: SqliteWrapper) {
+  initMikrotikDb(db);
+  const cfg = getMikrotikConfig(db);
+
+  try {
+    const [mangleRaw, filterRaw, addressListRaw] = await Promise.all([
+      fetchFromRouterOS(cfg, 'ip/firewall/mangle', 'GET', undefined, 5000),
+      fetchFromRouterOS(cfg, 'ip/firewall/filter', 'GET', undefined, 5000),
+      fetchFromRouterOS(cfg, 'ip/firewall/address-list', 'GET', undefined, 5000),
+    ]);
+
+    const mangleArr = toRouterArray(mangleRaw);
+    const filterArr = toRouterArray(filterRaw);
+    const addrArr = toRouterArray(addressListRaw);
+
+    const mangleFound = mangleArr.find(isOurUnpaidMangleRule);
+    const filterFound = filterArr.find(isOurUnpaidFilterDropRule);
+
+    const unpaidAddresses = addrArr
+      .filter((item: any) => String(item.list || '').toUpperCase() === UNPAID_ADDRESS_LIST_NAME)
+      .map((item: any) => ({
+        id: item['.id'] || '',
+        list: item.list || UNPAID_ADDRESS_LIST_NAME,
+        address: item.address || '',
+        comment: item.comment || '',
+        disabled: item.disabled === 'true' || item.disabled === true,
+        dynamic: item.dynamic === 'true' || item.dynamic === true,
+        creationTime: item['creation-time'] || '',
+      }));
+
+    const parsedMangle = mangleFound ? parseMangleRule(mangleFound) : null;
+    const parsedDrop = filterFound ? parseFilterRule(filterFound) : null;
+
+    return {
+      success: true,
+      mode: 'live' as const,
+      mangleRule: parsedMangle,
+      mangleRuleActive: Boolean(parsedMangle && !parsedMangle.disabled),
+      dropRule: parsedDrop,
+      dropRuleActive: Boolean(parsedDrop && !parsedDrop.disabled),
+      unpaidAddresses,
+      mangleRulesCount: mangleArr.length,
+      filterRulesCount: filterArr.length,
+    };
+  } catch (err: any) {
+    const stored = db.all<any>('SELECT * FROM router_address_lists WHERE UPPER(list) = ?', [UNPAID_ADDRESS_LIST_NAME]);
+    return {
+      success: false,
+      mode: 'error' as const,
+      error: err.message || 'Unable to query RouterOS firewall',
+      mangleRule: null,
+      mangleRuleActive: false,
+      dropRule: null,
+      dropRuleActive: false,
+      unpaidAddresses: (stored || []).map((s: any) => ({
+        id: s.id,
+        list: s.list,
+        address: s.address,
+        comment: s.comment || '',
+        disabled: Boolean(s.disabled),
+        dynamic: false,
+      })),
+    };
+  }
+}
+
+async function removeFirewallConnectionsForIps(cfg: MikroTikConfigRecord, addresses: string[]) {
+  const hostIps = addresses
+    .map((a) => a.trim().split('/')[0])
+    .filter((ip) => /^\d{1,3}(\.\d{1,3}){3}$/.test(ip) && !ip.endsWith('.0'));
+  if (hostIps.length === 0) return 0;
+
+  let cleared = 0;
+  try {
+    const connsRaw = await fetchFromRouterOS(cfg, 'ip/firewall/connection', 'GET', undefined, 3000);
+    const conns = toRouterArray(connsRaw);
+    const toDelete = conns.filter((c: any) => {
+      const src = String(c['src-address'] || '').split(':')[0];
+      return hostIps.includes(src);
+    });
+    for (const c of toDelete.slice(0, 60)) {
+      if (!c['.id']) continue;
+      try {
+        await fetchFromRouterOS(cfg, `ip/firewall/connection/${encodeURIComponent(c['.id'])}`, 'DELETE', undefined, 1500);
+        cleared++;
+      } catch {
+        // connection may have already closed
+      }
+    }
+  } catch {
+    // Connection tracking table may be large or disabled; non-fatal
+  }
+  return cleared;
+}
+
+export async function removeAddressListEntryById(db: SqliteWrapper, entryId: string, address?: string) {
+  initMikrotikDb(db);
+  const cfg = getMikrotikConfig(db);
+  let routerRemoved = false;
+  let routerError: string | undefined;
+
+  try {
+    if (entryId && !entryId.startsWith('unpaid-sub-')) {
+      await fetchFromRouterOS(cfg, `ip/firewall/address-list/${encodeURIComponent(entryId)}`, 'DELETE', undefined, 4000);
+      routerRemoved = true;
+    } else if (address) {
+      const lists = await fetchFromRouterOS(cfg, 'ip/firewall/address-list', 'GET', undefined, 4000);
+      for (const item of toRouterArray(lists)) {
+        if (String(item.list || '').toUpperCase() === UNPAID_ADDRESS_LIST_NAME && item.address === address) {
+          await fetchFromRouterOS(cfg, `ip/firewall/address-list/${encodeURIComponent(item['.id'])}`, 'DELETE', undefined, 4000);
+          routerRemoved = true;
+        }
+      }
+    }
+  } catch (err: any) {
+    routerError = err.message || 'RouterOS delete failed';
+  }
+
+  try {
+    if (entryId) {
+      db.run('DELETE FROM router_address_lists WHERE id = ?', [entryId]);
+    }
+    if (address) {
+      db.run('DELETE FROM router_address_lists WHERE UPPER(list) = ? AND address = ?', [UNPAID_ADDRESS_LIST_NAME, address]);
+    }
+  } catch {
+    // ignore
+  }
+
+  return {
+    success: routerRemoved || !routerError,
+    routerRemoved,
+    error: routerError,
+  };
+}
+
 export async function getRouterAddressLists(db: SqliteWrapper, subscribers: any[] = []) {
   initMikrotikDb(db);
   const cfg = getMikrotikConfig(db);
 
   try {
-    const lists = await fetchFromRouterOS(cfg, 'ip/firewall/address-list');
-    const parsed = (Array.isArray(lists) ? lists : []).map((item: any) => ({
+    const lists = await fetchFromRouterOS(cfg, 'ip/firewall/address-list', 'GET', undefined, 5000);
+    const parsed = toRouterArray(lists).map((item: any) => ({
       id: item['.id'],
       list: item.list || '',
       address: item.address || '',
@@ -944,11 +1363,12 @@ export async function getRouterAddressLists(db: SqliteWrapper, subscribers: any[
       addressLists: parsed,
     };
   } catch (err: any) {
-    // In fallback / simulated mode, query router_address_lists SQLite table
+    // In fallback / offline mode, return cached SQLite rows with error context
     const stored = db.all<any>('SELECT * FROM router_address_lists');
     return {
       success: true,
       mode: 'fallback',
+      error: err.message,
       addressLists: (stored || []).map((s: any) => ({
         id: s.id,
         list: s.list,
@@ -962,29 +1382,85 @@ export async function getRouterAddressLists(db: SqliteWrapper, subscribers: any[
 }
 
 export async function getAddressesForSubscriber(db: SqliteWrapper, sub: any, subscribers: any[] = []): Promise<string[]> {
+  const cfg = getMikrotikConfig(db);
   const addresses: Set<string> = new Set();
 
+  // 1. Live DHCP leases matched to this subscriber
   try {
     const dhcpRes = await getRouterDhcpLeases(db, subscribers);
     const leases = dhcpRes.leases || [];
 
     for (const lease of leases) {
       if (doesLeaseMatchSubscriber(lease, sub) && lease.address) {
-        addresses.add(lease.address.trim());
+        const cleanIp = String(lease.address).trim().split('/')[0];
+        if (isValidIpv4OrCidr(cleanIp)) {
+          addresses.add(cleanIp);
+        }
       }
     }
   } catch {
     // ignore
   }
 
-  // If subscriber has a VLAN assigned, add the 172.16.x.0/24 subnet to ensure all devices on this VLAN are covered
-  if (sub.vlan !== null && sub.vlan !== undefined && Number(sub.vlan) > 0) {
-    addresses.add(`172.16.${sub.vlan}.0/24`);
+  // 2. Explicit IPv4 / CIDR stored in subscriber notes (IPoE / static WAN)
+  if (sub.notes) {
+    const noteIps: string[] = String(sub.notes).match(/\b(?:\d{1,3}\.){3}\d{1,3}(?:\/\d{1,2})?\b/g) ?? [];
+    for (const ip of noteIps) {
+      if (isValidIpv4OrCidr(ip)) {
+        addresses.add(ip);
+      }
+    }
   }
 
-  // If no address found yet, fallback to subscriber ID subnet in 172.16.x.0/24
+  // 3. Dedicated VLAN subnet from RouterOS /ip/address (only when VLAN is dedicated to this subscriber)
+  const subVlan = sub.vlan !== null && sub.vlan !== undefined && !isNaN(Number(sub.vlan)) && Number(sub.vlan) > 0
+    ? Number(sub.vlan)
+    : null;
+  const subsSharingVlan = subVlan !== null
+    ? subscribers.filter((s) => Number(s.vlan) === subVlan && s.id !== sub.id).length
+    : 0;
+
+  if (subVlan !== null && subsSharingVlan === 0) {
+    try {
+      const [vlanIfacesRaw, ipAddressesRaw] = await Promise.all([
+        fetchFromRouterOS(cfg, 'interface/vlan', 'GET', undefined, 3000).catch(() => []),
+        fetchFromRouterOS(cfg, 'ip/address', 'GET', undefined, 3000).catch(() => []),
+      ]);
+      const vlanNames = new Set<string>([`vlan-${subVlan}`, `vlan${subVlan}`, `vlan_${subVlan}`]);
+      for (const v of toRouterArray(vlanIfacesRaw)) {
+        if (Number(v['vlan-id']) === subVlan && v.name) {
+          vlanNames.add(String(v.name).trim().toLowerCase());
+        }
+      }
+      for (const ipObj of toRouterArray(ipAddressesRaw)) {
+        const ifaceLower = String(ipObj.interface || '').trim().toLowerCase();
+        const isDisabled = ipObj.disabled === 'true' || ipObj.disabled === true;
+        if (!isDisabled && (vlanNames.has(ifaceLower) || extractVlanNumberFromText(ifaceLower) === subVlan)) {
+          const network = String(ipObj.network || '').trim();
+          const addrParts = String(ipObj.address || '').split('/');
+          const prefix = addrParts[1] ? parseInt(addrParts[1], 10) : NaN;
+          if (network && !isNaN(prefix) && prefix >= 16 && prefix <= 30) {
+            const cidr = `${network}/${prefix}`;
+            if (isValidIpv4OrCidr(cidr)) {
+              addresses.add(cidr);
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore if router is offline
+    }
+
+    // Fallback to standard 172.16.<vlan>.0/24 only if no addresses resolved yet and VLAN <= 254
+    if (addresses.size === 0 && subVlan <= 254) {
+      addresses.add(`172.16.${subVlan}.0/24`);
+    }
+  }
+
+  // 4. Last-resort valid fallback if subscriber had neither lease nor notes nor VLAN subnet
   if (addresses.size === 0) {
-    addresses.add(`172.16.${sub.vlan || sub.id}.0/24`);
+    const oct = subVlan && subVlan <= 254 ? subVlan : (Number(sub.id) % 250) + 1;
+    addresses.add(`172.16.${oct}.0/24`);
   }
 
   return Array.from(addresses);
@@ -994,7 +1470,8 @@ export async function addSubscriberToUnpaidList(
   db: SqliteWrapper,
   subId: number,
   subscribers: any[] = [],
-  targetIp?: string
+  targetIp?: string,
+  options?: { skipEnsureMangle?: boolean }
 ) {
   initMikrotikDb(db);
   const cfg = getMikrotikConfig(db);
@@ -1004,55 +1481,95 @@ export async function addSubscriberToUnpaidList(
   }
 
   const comment = `Subscriber #${sub.id} - ${sub.first} ${sub.last} (ID #${sub.id})`;
-  const targetAddrs = targetIp ? [targetIp] : await getAddressesForSubscriber(db, sub, subscribers);
+  const targetAddrs = targetIp ? [targetIp.trim()] : await getAddressesForSubscriber(db, sub, subscribers);
   const addedAddrs: string[] = [];
 
   let liveList: any[] = [];
+  let routerReachable = true;
+  let routerError: string | undefined;
+
   try {
-    const res = await fetchFromRouterOS(cfg, 'ip/firewall/address-list');
-    liveList = Array.isArray(res) ? res : [];
-  } catch {
-    // Offline / fallback mode
+    const res = await fetchFromRouterOS(cfg, 'ip/firewall/address-list', 'GET', undefined, 5000);
+    liveList = toRouterArray(res);
+  } catch (err: any) {
+    routerReachable = false;
+    routerError = err.message || 'Unable to query MikroTik address-list';
   }
 
   for (const addr of targetAddrs) {
-    const existing = liveList.find((item: any) => item.list === 'UNPAID' && item.address === addr);
-    if (!existing) {
-      try {
-        await fetchFromRouterOS(cfg, 'ip/firewall/address-list', 'POST', {
-          list: 'UNPAID',
-          address: addr,
-          comment,
-        });
-      } catch {
-        // Fallback or recorded locally
+    if (!isValidIpv4OrCidr(addr)) continue;
+
+    if (routerReachable) {
+      const existing = liveList.find((item: any) => String(item.list || '').toUpperCase() === UNPAID_ADDRESS_LIST_NAME && item.address === addr);
+      if (!existing) {
+        try {
+          await addRouterOSRecord(cfg, 'ip/firewall/address-list', {
+            list: UNPAID_ADDRESS_LIST_NAME,
+            address: addr,
+            comment,
+            disabled: 'false',
+          });
+        } catch (err: any) {
+          routerError = err.message || `Failed to add ${addr} to UNPAID list`;
+        }
+      } else if (existing.disabled === 'true' || existing.disabled === true) {
+        try {
+          await fetchFromRouterOS(cfg, `ip/firewall/address-list/${encodeURIComponent(existing['.id'])}`, 'PATCH', {
+            disabled: 'false',
+          });
+        } catch (err: any) {
+          routerError = err.message;
+        }
       }
     }
+
     const rowId = `unpaid-sub-${sub.id}-${addr.replace(/[^a-zA-Z0-9]/g, '-')}`;
     try {
       db.run(
-        `INSERT OR REPLACE INTO router_address_lists (id, list, address, comment, disabled) VALUES (?, 'UNPAID', ?, ?, 0)`,
-        [rowId, addr, comment]
+        `INSERT OR REPLACE INTO router_address_lists (id, list, address, comment, disabled) VALUES (?, ?, ?, ?, 0)`,
+        [rowId, UNPAID_ADDRESS_LIST_NAME, addr, comment]
       );
     } catch {}
     addedAddrs.push(addr);
   }
 
-  // Requirement: "instead of disabling vlan make it add to address list UNPAID."
-  // Ensure the VLAN interface remains enabled so subscriber traffic reaches RouterOS firewall
-  if (sub.vlan !== null && sub.vlan !== undefined && Number(sub.vlan) > 0) {
+  // Ensure the MikroTik Mangle rule (mark-packet UNPAID_INTERNET_BLOCK) and Forward drop rule are active
+  let mangleResult: any = null;
+  if (routerReachable && !options?.skipEnsureMangle) {
+    mangleResult = await ensureUnpaidMangleBlockRule(db);
+    if (!mangleResult.success && !routerError) {
+      routerError = mangleResult.error;
+    }
+  }
+
+  // Drop active FastTrack/established firewall connections for the suspended IP(s) so blocking applies immediately
+  let clearedConnections = 0;
+  if (routerReachable && addedAddrs.length > 0) {
+    clearedConnections = await removeFirewallConnectionsForIps(cfg, addedAddrs);
+  }
+
+  // Keep VLAN interface ENABLED so management, ARP-Ping, and DHCP keep working while mangle drops internet traffic
+  if (routerReachable && sub.vlan !== null && sub.vlan !== undefined && Number(sub.vlan) > 0) {
     try {
       await toggleVlanInterface(db, sub.vlan, false, subscribers);
     } catch {}
   }
 
+  const routerSynced = routerReachable && !routerError;
+
   return {
-    success: true,
-    message: `Suspended subscriber #${sub.id} (${sub.first} ${sub.last}): Added ${addedAddrs.join(', ')} to MikroTik address-list 'UNPAID'. VLAN interface remains enabled.`,
+    success: routerSynced,
+    routerSynced,
+    error: routerSynced ? undefined : `MikroTik RouterOS sync warning: ${routerError || 'Router unreachable'}`,
+    message: routerSynced
+      ? `Suspended ${sub.first} ${sub.last}: Added ${addedAddrs.join(', ')} to address-list '${UNPAID_ADDRESS_LIST_NAME}' (blocked via Mangle rule '${UNPAID_PACKET_MARK}', VLAN ${sub.vlan || 'N/A'} stays ONLINE).`
+      : `Saved locally but RouterOS update failed (${routerError}): ${addedAddrs.join(', ')} queued for address-list '${UNPAID_ADDRESS_LIST_NAME}'.`,
     subId,
     name: `${sub.first} ${sub.last}`,
     vlan: sub.vlan,
     addresses: addedAddrs,
+    clearedConnections,
+    mangleRuleActive: mangleResult ? Boolean(mangleResult.success) : undefined,
     isSuspended: true,
   };
 }
@@ -1068,37 +1585,49 @@ export async function removeSubscriberFromUnpaidList(
   const subName = sub ? `${sub.first} ${sub.last}` : `Subscriber #${subId}`;
 
   let removedCount = 0;
+  let routerReachable = true;
+  let routerError: string | undefined;
+
   try {
-    const lists = await fetchFromRouterOS(cfg, 'ip/firewall/address-list');
-    const liveList = Array.isArray(lists) ? lists : [];
+    const lists = await fetchFromRouterOS(cfg, 'ip/firewall/address-list', 'GET', undefined, 5000);
+    const liveList = toRouterArray(lists);
     const targetAddrs = sub ? await getAddressesForSubscriber(db, sub, subscribers) : [];
 
     for (const item of liveList) {
-      if (item.list === 'UNPAID') {
+      if (String(item.list || '').toUpperCase() === UNPAID_ADDRESS_LIST_NAME) {
         const matchesComment = item.comment && (item.comment.includes(`ID #${subId}`) || item.comment.includes(`Subscriber #${subId}`));
         const matchesAddr = targetAddrs.includes(item.address);
         if (matchesComment || matchesAddr) {
           try {
-            await fetchFromRouterOS(cfg, `ip/firewall/address-list/${encodeURIComponent(item['.id'])}`, 'DELETE');
+            await fetchFromRouterOS(cfg, `ip/firewall/address-list/${encodeURIComponent(item['.id'])}`, 'DELETE', undefined, 4000);
             removedCount++;
-          } catch {}
+          } catch (err: any) {
+            routerError = err.message;
+          }
         }
       }
     }
-  } catch {
-    // Offline / fallback mode
+  } catch (err: any) {
+    routerReachable = false;
+    routerError = err.message || 'Unable to query MikroTik address-list';
   }
 
   try {
     db.run(
-      `DELETE FROM router_address_lists WHERE list = 'UNPAID' AND (comment LIKE '%ID #' || ? || '%' OR comment LIKE '%Subscriber #' || ? || '%' OR id LIKE 'unpaid-sub-' || ? || '-%')`,
-      [String(subId), String(subId), String(subId)]
+      `DELETE FROM router_address_lists WHERE UPPER(list) = ? AND (comment LIKE '%ID #' || ? || '%' OR comment LIKE '%Subscriber #' || ? || '%' OR id LIKE 'unpaid-sub-' || ? || '-%')`,
+      [UNPAID_ADDRESS_LIST_NAME, String(subId), String(subId), String(subId)]
     );
   } catch {}
 
+  const routerSynced = routerReachable && !routerError;
+
   return {
-    success: true,
-    message: `Restored internet access for ${subName}: Removed from MikroTik address-list 'UNPAID'.`,
+    success: routerSynced,
+    routerSynced,
+    error: routerSynced ? undefined : `MikroTik RouterOS sync warning: ${routerError || 'Router unreachable'}`,
+    message: routerSynced
+      ? `Restored internet access for ${subName}: Removed ${removedCount} entry/entries from MikroTik address-list '${UNPAID_ADDRESS_LIST_NAME}'.`
+      : `Removed locally but RouterOS update failed (${routerError}).`,
     subId,
     name: subName,
     removedCount,
@@ -1111,10 +1640,11 @@ export async function toggleSubscriberSuspension(
   subId: number,
   suspend: boolean,
   subscribers: any[] = [],
-  targetIp?: string
+  targetIp?: string,
+  options?: { skipEnsureMangle?: boolean }
 ) {
   if (suspend) {
-    return await addSubscriberToUnpaidList(db, subId, subscribers, targetIp);
+    return await addSubscriberToUnpaidList(db, subId, subscribers, targetIp, options);
   } else {
     return await removeSubscriberFromUnpaidList(db, subId, subscribers);
   }
@@ -1130,7 +1660,9 @@ export async function getSubscriberSuspensionStatus(
   if (!sub) return { isSuspended: false, entries: [] };
 
   const addressListsResult = await getRouterAddressLists(db, subscribers);
-  const unpaidList = (addressListsResult.addressLists || []).filter((item: any) => item.list === 'UNPAID' && !item.disabled);
+  const unpaidList = (addressListsResult.addressLists || []).filter(
+    (item: any) => String(item.list || '').toUpperCase() === UNPAID_ADDRESS_LIST_NAME && !item.disabled
+  );
 
   const targetAddrs = await getAddressesForSubscriber(db, sub, subscribers);
   const matchingEntries = unpaidList.filter((item: any) => {
@@ -1148,11 +1680,13 @@ export async function getSubscriberSuspensionStatus(
     name: `${sub.first} ${sub.last}`,
     isSuspended: matchingEntries.length > 0,
     entries: matchingEntries,
+    mode: addressListsResult.mode,
+    error: addressListsResult.error,
   };
 }
 
 export async function toggleSubscriberInternet(db: SqliteWrapper, subId: number, disable: boolean, subscribers: any[]) {
-  // Instead of disabling VLAN or PPP secret, suspend by adding/removing from address-list UNPAID
+  // Instead of disabling VLAN or PPP secret, suspend by adding/removing from address-list UNPAID + mangle rule
   return await toggleSubscriberSuspension(db, subId, disable, subscribers);
 }
 
@@ -1169,7 +1703,7 @@ export async function batchSyncSubscribersToRouter(db: SqliteWrapper, subscriber
     const name = `${sub.first} ${sub.last}`;
 
     try {
-      const res = await toggleSubscriberSuspension(db, sub.id, shouldSuspend, subscribers);
+      const res = await toggleSubscriberSuspension(db, sub.id, shouldSuspend, subscribers, undefined, { skipEnsureMangle: true });
       results.push({
         subId: sub.id,
         name,
@@ -1190,12 +1724,15 @@ export async function batchSyncSubscribersToRouter(db: SqliteWrapper, subscriber
 
   const restoredCount = results.filter((r) => r.routerAction === 'RESTORED_ACTIVE').length;
   const suspendedCount = results.filter((r) => r.routerAction === 'SUSPENDED_UNPAID').length;
+  const mangleResult = suspendedCount > 0 ? await ensureUnpaidMangleBlockRule(db) : null;
 
   return {
     success: true,
     total: subscribers.length,
     restoredCount,
     suspendedCount,
+    mangleRuleActive: mangleResult ? Boolean(mangleResult.success) : undefined,
+    mangleError: mangleResult && !mangleResult.success ? mangleResult.error : undefined,
     details: results,
     timestamp: new Date().toLocaleString(),
   };
@@ -1210,34 +1747,48 @@ export async function toggleVlanInterface(
   const cfg = getMikrotikConfig(db);
   const vlanStr = String(vlanId).trim();
 
+  // Policy enforcement: Never disable VLAN interfaces for internet suspension — use address-list UNPAID + mangle rule
+  if (disable) {
+    return {
+      success: false,
+      error: `Disabling VLAN-${vlanStr} is disabled by system policy. Internet suspension uses MikroTik address-list '${UNPAID_ADDRESS_LIST_NAME}' and Mangle rule '${UNPAID_PACKET_MARK}'.`,
+    };
+  }
+
   try {
-    const ifaces = await fetchFromRouterOS(cfg, 'interface');
-    const list = Array.isArray(ifaces) ? ifaces : [];
+    const [ifacesRaw, vlanIfacesRaw] = await Promise.all([
+      fetchFromRouterOS(cfg, 'interface', 'GET', undefined, 4000),
+      fetchFromRouterOS(cfg, 'interface/vlan', 'GET', undefined, 4000).catch(() => []),
+    ]);
+    const list = toRouterArray(ifacesRaw);
+    const vlanMeta = toRouterArray(vlanIfacesRaw).find((v: any) => String(v['vlan-id']) === vlanStr);
     const matched = list.find((i: any) => {
       const nameLower = (i.name || '').toLowerCase();
       return (
+        (vlanMeta && nameLower === String(vlanMeta.name || '').toLowerCase()) ||
         nameLower === `vlan-${vlanStr}`.toLowerCase() ||
         nameLower === `vlan${vlanStr}`.toLowerCase() ||
-        String(i['vlan-id']) === vlanStr
+        String(i['vlan-id']) === vlanStr ||
+        extractVlanNumberFromText(i.name) === Number(vlanStr)
       );
     });
 
     if (matched) {
-      await fetchFromRouterOS(cfg, `interface/${matched['.id']}`, 'PATCH', {
-        disabled: disable ? 'true' : 'false',
+      await fetchFromRouterOS(cfg, `interface/${encodeURIComponent(matched['.id'])}`, 'PATCH', {
+        disabled: 'false',
       });
     } else {
       await fetchFromRouterOS(cfg, `interface/*${vlanStr}`, 'PATCH', {
-        disabled: disable ? 'true' : 'false',
+        disabled: 'false',
       });
     }
 
     return {
       success: true,
-      message: `Successfully set RouterOS interface 'VLAN-${vlanStr}' to ${disable ? 'DISABLED' : 'ENABLED'}.`,
+      message: `Verified RouterOS interface '${matched?.name || `VLAN-${vlanStr}`}' is ENABLED.`,
       vlan: vlanId,
       interfaceName: matched?.name || `VLAN-${vlanStr}`,
-      disabled: disable,
+      disabled: false,
     };
   } catch (err: any) {
     return { success: false, error: `RouterOS Error: ${err.message}` };
@@ -1442,7 +1993,7 @@ export async function checkAndDisableOverdueVlans(db: SqliteWrapper) {
     }
 
     if (isOverdue) {
-      const res = await addSubscriberToUnpaidList(db, sub.id, subscribers);
+      const res = await addSubscriberToUnpaidList(db, sub.id, subscribers, undefined, { skipEnsureMangle: true });
       processed.push({
         subId: sub.id,
         name: `${sub.first} ${sub.last}`,
@@ -1456,11 +2007,16 @@ export async function checkAndDisableOverdueVlans(db: SqliteWrapper) {
     }
   }
 
+  // Ensure the MikroTik Mangle rule (mark-packet UNPAID_INTERNET_BLOCK) and Forward Drop rule are active
+  const mangleResult = processed.length > 0 ? await ensureUnpaidMangleBlockRule(db) : null;
+
   return {
     success: true,
     timestamp: new Date().toISOString(),
     formattedTime: new Date().toLocaleString(),
     overdueSubscribersCount: processed.length,
+    mangleRuleActive: mangleResult ? Boolean(mangleResult.success) : undefined,
+    mangleError: mangleResult && !mangleResult.success ? mangleResult.error : undefined,
     processed,
   };
 }

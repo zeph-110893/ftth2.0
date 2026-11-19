@@ -8,7 +8,8 @@ interface SubscribersListProps {
   subscribers: Subscriber[];
   payments: PaymentRecord[];
   dhcpLeases?: MikroTikDhcpLease[];
-  leasesMode?: 'live' | 'fallback' | null;
+  leasesMode?: 'live' | 'error' | null;
+  leasesError?: string | null;
   mikrotikInterfaces?: MikroTikInterface[];
   currentUser?: AuthUser | null;
   onSelectSubscriber: (sub: Subscriber) => void;
@@ -17,10 +18,11 @@ interface SubscribersListProps {
   onSyncLeases?: () => Promise<{
     success: boolean;
     leases: MikroTikDhcpLease[];
-    mode: 'live' | 'fallback' | null;
+    mode: 'live' | 'error' | null;
     error?: string;
   }>;
   isSyncingLeases?: boolean;
+  onOpenMikroTik?: () => void;
   onAddPayment?: (payment: PaymentRecord) => void;
 }
 
@@ -29,6 +31,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   payments,
   dhcpLeases = [],
   leasesMode = null,
+  leasesError = null,
   mikrotikInterfaces = [],
   currentUser,
   onSelectSubscriber,
@@ -36,6 +39,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
   onRefreshData,
   onSyncLeases,
   isSyncingLeases = false,
+  onOpenMikroTik,
   onAddPayment,
 }) => {
   const isReadOnly = !canWrite(currentUser);
@@ -111,18 +115,12 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
     setActionNotification(null);
     if (onSyncLeases) {
       const result = await onSyncLeases();
-      if (result.success) {
-        if (result.mode === 'fallback') {
-          setActionNotification({
-            type: 'info',
-            message: `RouterOS unreachable (${result.error || 'connection failed'}). Showing ${result.leases.length} simulated fallback DHCP leases — verify RouterOS host/credentials in MikroTik RouterOS tab.`,
-          });
-        } else {
-          setActionNotification({
-            type: 'success',
-            message: `Synced ${result.leases.length} live DHCP lease${result.leases.length === 1 ? '' : 's'} from MikroTik RouterOS.`,
-          });
-        }
+      if (result.success && result.mode !== 'error') {
+        const boundCount = result.leases.filter((l) => l.status === 'bound').length;
+        setActionNotification({
+          type: 'success',
+          message: `Synced ${result.leases.length} live DHCP lease${result.leases.length === 1 ? '' : 's'} (${boundCount} bound) from MikroTik RouterOS.`,
+        });
       } else {
         setActionNotification({
           type: 'error',
@@ -448,8 +446,8 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
             >
               <RefreshCw className={`w-3.5 h-3.5 text-cyan-600 shrink-0 ${isSyncingLeases ? 'animate-spin' : ''}`} />
               <span>{isSyncingLeases ? 'Syncing Leases...' : 'Sync Leases'}</span>
-              {leasesMode === 'fallback' && (
-                <span className="px-1.5 py-0.2 bg-amber-100 text-amber-800 border border-amber-300 text-[9px] font-bold rounded uppercase">
+              {leasesMode === 'error' && (
+                <span className="px-1.5 py-0.2 bg-rose-100 text-rose-800 border border-rose-300 text-[9px] font-bold rounded uppercase">
                   Offline
                 </span>
               )}
@@ -463,7 +461,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
               onClick={() => setIsConfirmModalOpen(true)}
               disabled={isDisablingOverdue}
               className="col-span-2 sm:col-span-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200/90 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto min-h-[34px]"
-              title="Suspend all overdue subscribers by adding their IP to MikroTik address-list UNPAID"
+              title="Suspend all overdue subscribers by adding their IP to MikroTik address-list UNPAID and blocking via Mangle rule"
             >
               <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
               <span>Suspend Overdue (UNPAID)</span>
@@ -513,6 +511,42 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
           >
             <X className="w-3.5 h-3.5" />
           </button>
+        </div>
+      )}
+
+      {/* RouterOS DHCP Connection Error Banner */}
+      {leasesMode === 'error' && (
+        <div className="p-3.5 rounded-xl border border-rose-200 bg-rose-50 text-rose-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">MikroTik RouterOS DHCP Leases Unavailable</p>
+              <p className="text-[11px] text-rose-800 mt-0.5">
+                {leasesError || 'Could not reach RouterOS REST API (/ip/dhcp-server/lease).'} Fake fallback leases are disabled so counts stay accurate.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {onSyncLeases && (
+              <button
+                type="button"
+                onClick={handleSyncLeasesClick}
+                disabled={isSyncingLeases}
+                className="px-3 py-1.5 bg-white hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-lg font-bold text-[11px] cursor-pointer disabled:opacity-50"
+              >
+                {isSyncingLeases ? 'Retrying...' : 'Retry Sync'}
+              </button>
+            )}
+            {onOpenMikroTik && (
+              <button
+                type="button"
+                onClick={onOpenMikroTik}
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-[11px] cursor-pointer"
+              >
+                Router Settings
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -635,14 +669,25 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                     </span>
 
                     {/* Leases */}
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border ${
-                      subLeases.length > 0
-                        ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
-                        : 'bg-slate-50 text-slate-500 border-slate-200'
-                    }`}>
-                      <Wifi className="w-2.5 h-2.5" />
-                      <span>{subLeases.length} {subLeases.length === 1 ? 'device' : 'devices'}</span>
-                    </span>
+                    {(() => {
+                      const boundCount = subLeases.filter((l) => l.status === 'bound').length;
+                      const waitingCount = subLeases.length - boundCount;
+                      return (
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border ${
+                          boundCount > 0
+                            ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
+                            : waitingCount > 0
+                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : 'bg-slate-50 text-slate-500 border-slate-200'
+                        }`}>
+                          <Wifi className="w-2.5 h-2.5" />
+                          <span>
+                            {boundCount} {boundCount === 1 ? 'bound' : 'bound'}
+                            {waitingCount > 0 ? ` +${waitingCount} wait` : ''}
+                          </span>
+                        </span>
+                      );
+                    })()}
 
                     {/* Bandwidth if present */}
                     {iface && (iface.rxByte || iface.txByte) ? (
@@ -891,17 +936,32 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
 
                       {/* DHCP Lease Count Only */}
                       <td className="py-3 px-3">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
-                            subLeases.length > 0
-                              ? 'bg-cyan-50 text-cyan-700 border border-cyan-200'
-                              : 'bg-slate-50 text-slate-500 border border-slate-200'
-                          }`}
-                          title={`${subLeases.length} active lease(s)`}
-                        >
-                          <Wifi className="w-3 h-3 text-cyan-600" />
-                          <span>{subLeases.length} {subLeases.length === 1 ? 'lease' : 'leases'}</span>
-                        </span>
+                        {(() => {
+                          const boundCount = subLeases.filter((l) => l.status === 'bound').length;
+                          const waitingCount = subLeases.length - boundCount;
+                          return (
+                            <span
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
+                                boundCount > 0
+                                  ? 'bg-cyan-50 text-cyan-700 border border-cyan-200'
+                                  : waitingCount > 0
+                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  : 'bg-slate-50 text-slate-500 border border-slate-200'
+                              }`}
+                              title={`${boundCount} bound active lease(s)${waitingCount > 0 ? `, ${waitingCount} waiting static lease(s)` : ''}`}
+                            >
+                              <Wifi className="w-3 h-3 text-cyan-600" />
+                              <span>
+                                {boundCount} {boundCount === 1 ? 'lease' : 'leases'}
+                              </span>
+                              {waitingCount > 0 && (
+                                <span className="text-[10px] text-amber-700 font-semibold">
+                                  +{waitingCount}w
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })()}
                       </td>
 
                       {/* Bandwidth Usage */}
@@ -1297,7 +1357,7 @@ export const SubscribersList: React.FC<SubscribersListProps> = ({
                 <div>
                   <p className="font-semibold">Confirm RouterOS Action</p>
                   <p className="text-amber-800 text-[11px] mt-0.5">
-                    This action connects to the MikroTik router and automatically adds the IP addresses of all active overdue subscribers to the firewall address-list <strong>UNPAID</strong>. Their VLAN interfaces will remain online so their routers stay connected and can receive payment reminder pages.
+                    This action adds overdue subscribers&apos; IP addresses to the MikroTik firewall address-list <strong>UNPAID</strong> and enforces the <strong>Mangle + Forward Drop rule</strong> (<code>UNPAID_INTERNET_BLOCK</code>) to block their internet access. Their VLAN interfaces stay enabled so ONU/router links remain reachable.
                   </p>
                 </div>
               </div>
